@@ -1,0 +1,16 @@
+[Unit]
+Description=Redmine personal overview
+After=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=%h/redmine-assistant
+EnvironmentFile=-%h/.config/redmine-assistant.env
+Environment=REDMINE_DB=%h/.local/share/redmine-assistant/data.sqlite3
+ExecStart=/usr/bin/python3 %h/redmine-assistant/redmine.py
+Restart=on-failure
+RestartSec=10
+UMask=0077
+
+[Install]
+WantedBy=default.target
