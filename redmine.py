@@ -53,6 +53,7 @@ def connect():
     db.execute('CREATE TABLE IF NOT EXISTS issues (id INTEGER PRIMARY KEY, payload TEXT NOT NULL, updated TEXT NOT NULL, first_seen TEXT NOT NULL)')
     db.execute('CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT NOT NULL)')
     db.execute('CREATE TABLE IF NOT EXISTS events (id INTEGER PRIMARY KEY, issue_id INTEGER NOT NULL, kind TEXT NOT NULL, seen_at TEXT NOT NULL)')
+    db.execute('CREATE TABLE IF NOT EXISTS issue_customer_suggestions (issue_id INTEGER PRIMARY KEY, updated TEXT NOT NULL, payload TEXT NOT NULL)')
     db.execute('CREATE TABLE IF NOT EXISTS issue_customer_links (issue_id INTEGER PRIMARY KEY, updated TEXT NOT NULL, payload TEXT NOT NULL)')
     db.execute('CREATE TABLE IF NOT EXISTS customer_issue_status (issue_id INTEGER PRIMARY KEY, payload TEXT NOT NULL, checked_at TEXT NOT NULL)')
     db.execute('CREATE TABLE IF NOT EXISTS added_customers (issue_id INTEGER PRIMARY KEY, name TEXT NOT NULL, address TEXT NOT NULL)')
@@ -95,12 +96,20 @@ def sync():
                 link_updates[issue['id']] = find_issue_customers(issue['id'])
             except Exception:
                 link_updates[issue['id']] = None
+    try:
+        catalog = matching_customers()
+        proposals = {i['id']: customer_suggestions(i.get('subject', ''), i.get('description', ''), catalog)
+                     for i in collected.values() if i.get('project', {}).get('id') == 12}
+    except Exception:
+        proposals = None
     now = datetime.now(timezone.utc).isoformat()
     with connect() as db:
         initial = db.execute("SELECT value FROM meta WHERE key='last_sync'").fetchone() is None
         previous = {row[0]: row[1] for row in db.execute('SELECT id, updated FROM issues')}
         for issue in collected.values():
             iid = issue['id']
+            if proposals is not None and iid in proposals:
+                db.execute('INSERT INTO issue_customer_suggestions VALUES (?, ?, ?) ON CONFLICT(issue_id) DO UPDATE SET updated=excluded.updated, payload=excluded.payload', (iid, issue['updated_on'], json.dumps(proposals[iid], ensure_ascii=False)))
             if iid in link_updates:
                 links = link_updates[iid]
                 if links is None:
@@ -113,6 +122,7 @@ def sync():
         for (old_id,) in db.execute('SELECT id FROM issues').fetchall():
             if old_id not in collected:
                 db.execute('DELETE FROM issues WHERE id=?', (old_id,))
+                db.execute('DELETE FROM issue_customer_suggestions WHERE issue_id=?', (old_id,))
         for k,v in [('last_sync', now), ('user_id', str(me)), ('error', '')]:
             db.execute('INSERT INTO meta VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value=excluded.value', (k,v))
     return len(collected)
@@ -121,6 +131,7 @@ def snapshot():
     with connect() as db:
         meta = dict(db.execute('SELECT key,value FROM meta'))
         data = [json.loads(row[0]) for row in db.execute('SELECT payload FROM issues ORDER BY updated DESC')]
+        proposals = {i: (updated, json.loads(payload)) for i, updated, payload in db.execute('SELECT issue_id, updated, payload FROM issue_customer_suggestions')}
         direct_links = {i: json.loads(payload) for i, payload in db.execute('SELECT issue_id, payload FROM issue_customer_links')}
         events = [{'issue_id': i, 'kind': k, 'seen_at': t} for i,k,t in db.execute('SELECT issue_id,kind,seen_at FROM events ORDER BY id DESC LIMIT 100')]
     customer_links = {}
@@ -130,6 +141,8 @@ def snapshot():
     for issue in data:
         links = direct_links.get(issue['id'], customer_links.get(issue['id'], []))
         issue['customers'] = list({c['id']: c for c in links}.values())
+        cached = proposals.get(issue['id'])
+        issue['customer_suggestions'] = cached[1] if cached and cached[0] == issue.get('updated_on') and not issue['customers'] else []
         issue['hardware_reasons'] = classify(issue)
         issue['mine'] = str(issue.get('assigned_to', {}).get('id', '')) == meta.get('user_id')
     return {'issues': data, 'events': events, 'last_sync': meta.get('last_sync'), 'error': meta.get('error'), 'configured': bool(KEY), 'ai_configured': bool(MODEL), 'base_url': BASE}
@@ -149,6 +162,19 @@ def customers():
         customer['in_open_issues'] = customer['issue_id'] in issue_ids
         customer['related_status'] = states.get(customer['issue_id'])
     return {'customers': data, 'map_configured': bool(MAP_KEY), 'base_url': BASE}
+
+def matching_customers():
+    # Only explicitly relevant contact fields are used, in memory and never returned to clients.
+    allowed = {'Email', 'Kontakt vedoucí stravování', 'Kontakt ředitel', 'Kontakt IT'}
+    result = []
+    for item in issues({'project_id': 'zakaznici', 'tracker_id': 4, 'status_id': '*' }):
+        if item.get('project', {}).get('id') != 1 or item.get('tracker', {}).get('id') != 4:
+            continue
+        fields = {f.get('name'): f.get('value') for f in item.get('custom_fields', []) if f.get('name') in allowed | {'Adresa'}}
+        result.append({'id': item['id'], 'name': item.get('subject', ''), 'address': fields.get('Adresa') or '',
+                       'contacts': [value for key, value in fields.items() if key in allowed and isinstance(value, str)]})
+    return result
+
 
 def redmine_customers():
     if not KEY:
@@ -212,7 +238,7 @@ def helpdesk_suggestions(iid):
     issue = request(f'/issues/{iid}.json', {'include': 'relations'})['issue']
     if issue.get('project', {}).get('id') != 12:
         raise ValueError('Nejde o požadavek projektu Helpdesk.')
-    all_customers = redmine_customers()
+    all_customers = matching_customers()
     members = helpdesk_members()
     current = request('/users/current.json')['user']
     reasons = classify(issue)

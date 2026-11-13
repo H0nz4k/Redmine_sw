@@ -141,6 +141,20 @@ class SyncTests(unittest.TestCase):
         partial = customer_suggestions('Oprava Třebechovice', '', [{'id': 9, 'name': 'Třebechovice škola', 'address': ''}])
         self.assertIn('zkontrolujte', partial[0]['reason'])
 
+    def test_contact_matching_and_ambiguity(self):
+        from suggestions import customer_suggestions
+        customers = [
+            {'id': 7, 'name': 'ZŠ Lípa', 'contacts': ['Jana Novotná, +420 601 234 567', 'skola@example.cz']},
+            {'id': 8, 'name': 'MŠ Lípa', 'contacts': ['601234567']},
+        ]
+        result = customer_suggestions('Oprava ZŠ Lípa', 'Novotná, tel. 601 234 567', customers)
+        self.assertEqual([item['id'] for item in result], [7, 8])
+        self.assertIn('telefon', result[0]['reason'])
+        self.assertIn('jméno v textu', result[0]['reason'])
+        self.assertNotIn('601', str(result))
+        self.assertEqual(customer_suggestions('Oprava', 'kontakt na gmail.com', customers), [])
+        self.assertIn('e-mail', customer_suggestions('Pomoc', 'skola@example.cz', customers)[0]['reason'])
+
     def test_pagination(self):
         responses = [{'issues':[{'id':1}], 'total_count':2}, {'issues':[{'id':2}], 'total_count':2}]
         with patch.object(redmine, 'request', side_effect=responses):
