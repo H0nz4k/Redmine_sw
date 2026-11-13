@@ -73,10 +73,54 @@ class DigestTests(unittest.TestCase):
         self.assertEqual(self.generate("2026-11-13T16:35:00+00:00")["event_count"], 2)
         self.assertEqual(len(digest.history(self.connect)), 1)
         self.assertEqual(len([line for line in digest.read_report(self.connect, "2026-11-13").splitlines()
-                              if "/issues/42" in line]), 2)
+                              if "/issues/42" in line]), 3)
         self.assertEqual(stat.S_IMODE((digest.REPORT_DIR / "2026-11-13.md").stat().st_mode), 0o600)
         with self.connect() as db:
             self.assertEqual(db.execute("SELECT COUNT(*) FROM digest_event_ids").fetchone()[0], 2)
+
+    def test_narrative_reads_description_and_journal_notes(self):
+        journal = [
+            {"id": 10, "created_on": "2026-11-13T14:00:00Z",
+             "user": {"name": "Jarda"}, "details": [],
+             "notes": "Terminál přestal načítat čipy strávníků."},
+            {"id": 11, "created_on": "2026-11-13T15:00:00Z",
+             "user": {"name": "Petr"}, "details": [],
+             "notes": "Zkontroloval kabel a připojení; oprava pokračuje."},
+            {"id": 12, "created_on": "2026-11-14T15:00:00Z",
+             "user": {"name": "Petr"}, "details": [],
+             "notes": "Vyměněna vadná deska, dokončeno až další den."},
+        ]
+        item = self.issue(44, "2026-11-13T12:00:00Z",
+                          "2026-11-14T15:00:00Z", journals=journal)
+        self.details[44]["description"] = (
+            "Na škole nelze načíst čipy při výdeji obědů. "
+            "Terminál zobrazuje chybu spojení."
+        )
+        result = self.generate("2026-11-13T16:30:00+00:00")
+        self.assertEqual(result["event_count"], 3)
+        report = digest.read_report(self.connect, "2026-11-13")
+        story = report.split("## Co se skutečně řešilo")[1].split("## Co přibylo")[0]
+        self.assertIn("Na škole nelze načíst čipy", story)
+        self.assertIn("Terminál přestal načítat čipy", story)
+        self.assertIn("Jarda", story)
+        self.assertIn("Zkontroloval kabel", story)
+        self.assertIn("Petr", story)
+        self.assertIn("/issues/44", story)
+        self.assertNotIn("Vyměněna vadná deska", story)
+        self.assertNotIn("hotovo", story.lower())
+
+    def test_repeated_changes_same_issue_have_single_narrative_paragraph(self):
+        changes = [
+            {"id": 21, "created_on": "2026-11-13T14:00:00Z",
+             "user": {"name": "Jarda"}, "details": [], "notes": "Ověřujeme spojení."},
+            {"id": 22, "created_on": "2026-11-13T15:00:00Z",
+             "user": {"name": "Petr"}, "details": [], "notes": "Zatím otevřeno."},
+        ]
+        self.issue(45, "2026-11-13T10:00:00Z", "2026-11-13T15:00:00Z", journals=changes)
+        report = digest.read_report(self.connect, self.generate("2026-11-13T16:30:00+00:00")["day"])
+        story = report.split("## Co se skutečně řešilo")[1].split("## Co přibylo")[0]
+        self.assertEqual(story.count("/issues/45"), 1)
+        self.assertIn("Zatím otevřeno", story)
 
     def test_next_day_includes_changes_after_previous_report(self):
         self.issue(42, "2026-11-13T12:00:00Z", "2026-11-13T14:00:00Z")
