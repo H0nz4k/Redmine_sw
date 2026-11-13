@@ -55,3 +55,7 @@ Privátní reporty se ukládají mimo Git do `data/reports/YYYY-MM-DD.md`, nebo 
 ### Slovní kronika obsahu požadavků (od verze 0.1.0-dev.3)
 
 Nad detailním chronologickým soupisem se vytváří část **Co se skutečně řešilo**. U každého dotčeného požadavku načte celý detail `GET /issues/{id}.json?include=journals` a z jeho popisu a komentářů z daného období vytvoří krátký odstavcový přehled s odkazy. Jeden úkol = jeden odstavec; více komentářů se nepovažuje za více samostatných problémů. Zachovává jména autorů, nevypisuje komentáře napsané až po uzávěrce, označuje vyřešení jen na základě doložené změny stavu a při chybě načtení historii nepředstírá. Jde o **faktický výtah podkladů**, nikoliv autonomní AI interpretaci či potvrzení skutečného provedení opravy. Původní soupis událostí zůstává pod ním. Zpracování probíhá lokálně, texty se neposílají do externích služeb.
+
+### Spolehlivější generování (0.1.0-dev.4)
+
+Ruční generování používá samostatný serverový worker: `POST /api/digest/generate` zahájí práci a vrací HTTP 202, stav lze načíst přes `GET /api/digest/job`. Při opakovaném kliknutí během běhu se druhé generování nespustí. Prohlížeč dotazuje stav a po dokončení obnoví historii. Plánovaný worker vytváří samostatný denní soubor pro každou vynechanou uzávěrku od posledního úspěšného reportu; při chybě nepřeskakuje nedokončený den. Respektuje lokální čas Europe/Prague i změnu letního času. Testy pokrývají více dní po výpadku, opakovaný běh bez duplicit, DST a jediný běžící ruční úkol.

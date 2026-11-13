@@ -155,6 +155,81 @@ class DigestTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 digest.set_time(self.connect, invalid)
 
+    def test_missed_days_are_generated_separately_without_duplicates(self):
+        # Start with a successful report at 17:30 Prague on Friday.
+        self.issue(40, "2026-11-13T12:00:00Z", "2026-11-13T14:00:00Z")
+        self.generate("2026-11-13T16:30:00+00:00")
+        self.items.clear()
+        self.issue(41, "2026-11-14T10:00:00Z", "2026-11-14T10:00:00Z")
+        self.issue(42, "2026-11-15T10:00:00Z", "2026-11-15T10:00:00Z")
+        self.issue(43, "2026-11-16T10:00:00Z", "2026-11-16T10:00:00Z")
+        after_outage = datetime(2026, 11, 16, 17, 0, tzinfo=timezone.utc)
+        planned = digest.pending_cutoffs(self.connect, after_outage)
+        self.assertEqual([x.date().isoformat() for x in planned],
+                         ["2026-11-14", "2026-11-15", "2026-11-16"])
+        results = digest.generate_missed_reports(
+            self.connect, self.issues, self.request,
+            "https://redmine.example.test", now=after_outage)
+        self.assertEqual([x["day"] for x in results],
+                         ["2026-11-14", "2026-11-15", "2026-11-16"])
+        for day, iid in (("2026-11-14", 41), ("2026-11-15", 42), ("2026-11-16", 43)):
+            report = digest.read_report(self.connect, day)
+            self.assertIn(f"/issues/{iid}", report)
+            for other in ({41, 42, 43} - {iid}):
+                self.assertNotIn(f"/issues/{other}", report)
+        self.assertEqual(digest.generate_missed_reports(
+            self.connect, self.issues, self.request,
+            "https://redmine.example.test", now=after_outage), [])
+        self.assertEqual(len(digest.history(self.connect)), 4)
+
+    def test_dst_transition_preserves_local_schedule(self):
+        # Prague ends daylight saving on 25 October 2026.
+        with self.connect() as db:
+            digest._schema(db)
+            db.execute(
+                "INSERT INTO digest_reports VALUES (?,?,?,?,?)",
+                ("2026-10-24", "2026-10-23T15:30:00Z",
+                 "2026-10-24T15:30:00Z", "unused", 0))
+        cutoffs = digest.pending_cutoffs(
+            self.connect, datetime(2026, 10, 25, 17, 0, tzinfo=timezone.utc))
+        self.assertEqual(len(cutoffs), 1)
+        self.assertEqual(cutoffs[0].isoformat(), "2026-10-25T16:30:00+00:00")
+        with self.connect() as db:
+            last = db.execute("SELECT end_utc FROM digest_reports").fetchone()[0]
+        self.assertEqual((cutoffs[0] - digest._utc(last)).total_seconds(), 25 * 3600)
+
+    def test_manual_report_is_asynchronous_and_single_flight(self):
+        from threading import Event
+        started, released, completed = Event(), Event(), Event()
+
+        def slow_generate(*args, **kwargs):
+            started.set()
+            try:
+                self.assertTrue(released.wait(3))
+                return {"day": "2026-11-13", "event_count": 3}
+            finally:
+                completed.set()
+
+        with patch.object(digest, "generate", side_effect=slow_generate):
+            first = digest.launch_manual_report(
+                self.connect, self.issues, self.request, "https://redmine.example.test")
+            self.assertTrue(first["accepted"])
+            self.assertTrue(started.wait(2))
+            self.assertEqual(digest.manual_job_status()["state"], "running")
+            again = digest.launch_manual_report(
+                self.connect, self.issues, self.request, "https://redmine.example.test")
+            self.assertFalse(again["accepted"])
+            released.set()
+            self.assertTrue(completed.wait(2))
+        # Thread updates its status immediately after returning from slow_generate.
+        from time import sleep
+        for _ in range(100):
+            if digest.manual_job_status()["state"] == "done":
+                break
+            sleep(0.01)
+        self.assertEqual(digest.manual_job_status()["state"], "done")
+        self.assertEqual(digest.manual_job_status()["result"]["event_count"], 3)
+
     def test_access_is_restricted_to_known_archive_dates(self):
         with self.assertRaisesRegex(ValueError, "Neplatné datum"):
             digest.read_report(self.connect, "../secrets")

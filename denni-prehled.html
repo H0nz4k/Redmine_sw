@@ -68,9 +68,30 @@ $('#save').onclick=async()=>{const b=$('#save');b.disabled=true;try{
  const r=await api('/api/digest/settings',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({time:$('#digest-time').value})});
  const d=await r.json();if(!r.ok)throw Error(d.error);await loadSettings();announce('Čas reportu byl uložen.')
 }catch(e){announce('Uložení selhalo: '+e.message)}finally{b.disabled=false}};
-$('#generate').onclick=async()=>{const b=$('#generate');b.disabled=true;announce('Načítám změny napříč projekty…');try{
- const r=await api('/api/digest/generate',{method:'POST'});const d=await r.json();if(!r.ok)throw Error(d.error);
- await loadHistory(d.day);await loadSettings();announce('Report '+d.day+' uložen ('+d.event_count+' událostí).')
-}catch(e){announce('Generování selhalo: '+e.message)}finally{b.disabled=false}};
+async function awaitReport(){
+ for(;;){
+  await new Promise(resolve=>setTimeout(resolve,1500));
+  const response=await api('/api/digest/job');
+  if(!response.ok)throw Error('Stav generování není dostupný');
+  const job=await response.json();
+  if(job.state==='error')throw Error(job.error||'Generování selhalo');
+  if(job.state==='done')return job.result;
+ }
+}
+async function showCompletedReport(){
+ const result=await awaitReport();
+ await loadHistory(result.day);await loadSettings();
+ announce('Report '+result.day+' uložen ('+result.event_count+' událostí).');
+}
+$('#generate').onclick=async()=>{
+ const b=$('#generate');b.disabled=true;
+ announce('Generování běží na serveru, prohlížeč nemusí zůstat otevřený…');
+ try{
+  const r=await api('/api/digest/generate',{method:'POST'});const d=await r.json();
+  if(!r.ok)throw Error(d.error||'Server už generuje jiný report');
+  await showCompletedReport();
+ }catch(e){announce('Generování selhalo: '+e.message)}
+ finally{b.disabled=false}
+};
 Promise.all([loadSettings(),loadHistory()]).catch(e=>announce(e.message));
 </script></body></html>

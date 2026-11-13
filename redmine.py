@@ -427,7 +427,7 @@ def digest_worker():
     while True:
         try:
             if KEY and daily_digest.due(connect):
-                daily_digest.generate(connect, issues, request, BASE)
+                daily_digest.generate_missed_reports(connect, issues, request, BASE)
                 with connect() as db:
                     db.execute("INSERT INTO meta(key,value) VALUES('digest_error','') ON CONFLICT(key) DO UPDATE SET value=excluded.value")
         except Exception as exc:
@@ -490,6 +490,8 @@ class Handler(BaseHTTPRequestHandler):
             self.send(value)
         elif self.path == '/api/digest/history':
             self.send({'reports': daily_digest.history(connect)})
+        elif self.path == '/api/digest/job':
+            self.send(daily_digest.manual_job_status())
         elif self.path.startswith('/api/digest/report?'):
             params = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)
             day = params.get('day', [''])[0]
@@ -553,7 +555,8 @@ class Handler(BaseHTTPRequestHandler):
                 else:
                     if not KEY:
                         raise ValueError('Chybí REDMINE_API_KEY.')
-                    self.send(daily_digest.generate(connect, issues, request, BASE))
+                    result = daily_digest.launch_manual_report(connect, issues, request, BASE)
+                    self.send(result, status=202 if result.get('accepted') else 409)
             elif self.path.startswith('/api/summary/'):
                 iid = int(self.path.rsplit('/', 1)[1])
                 issue = next((i for i in snapshot()['issues'] if i['id'] == iid), None)
