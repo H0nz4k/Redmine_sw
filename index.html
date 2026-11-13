@@ -10,6 +10,14 @@
 button{background:#50545d;border-color:#777d88}button:hover{background:#60656e}input,select{background:#303238;border-color:#838995;color:#fff}input::placeholder{color:#c2c6ce}
 .primary-action{background:#4f46b9;border-color:#7770e8}.primary-action:hover{background:#6259cd}.secondary-action{background:transparent;border-color:#969ba5;color:#fff}
 .advice,.summary{border-color:#777d88}.meta span+span:before{color:#c2c6ce}.age.medium{color:#ffca87}.age.old{color:#ffb7b7}
+
+/* Světlé povrchy pro zřetelné oddělení obsahu. */
+:root{color-scheme:light;--bg:#e7ecef;--panel:#fff;--line:#bcc6cd;--text:#202a33;--muted:#4d5a65;--accent:#4f46b9;color:var(--text)}
+header{color:#202a33}.nav{background:#d8e0e5;border-color:#aebbc4}.nav button,.map-link,.nav-count{color:#34434f}.nav button:hover,.map-link:hover{background:#c7d2da;color:#18242d}.nav button[aria-current=true]{background:#becbd5;color:#17242c}
+.status,.sub,.results,.customer-label,.customer-reason,.meta,.issue-id{color:#4d5a65}.issue{background:#fff;border-color:#bcc6cd}.customer-box{background:#eff3f5;border-color:#c9d2d8}.customer-title a,.issue h3 a{color:#1f3345}
+button{background:#e2e8ec;border-color:#9eacb6;color:#263641}button:hover{background:#ccd8df}input,select{background:#fff;border-color:#8f9eaa;color:#202a33}input::placeholder{color:#586977}
+header #sync{background:#fff;border-color:#8799a5;color:#202a33}.primary-action{background:#4f46b9;border-color:#4f46b9;color:#fff}.primary-action:hover{background:#423aa3}.secondary-action{background:#fff;border-color:#8799a5;color:#263641}
+.advice,.summary{border-color:#bcc6cd}.advice strong{color:#202a33}.meta span+span:before{color:#73838e}.age.medium{color:#945300}.age.old{color:#a0212c}.empty{color:#4d5a65}
 </style></head><body><header><div><section><h1>Redmine přehled</h1><p class="sub">Úkoly a helpdesk na jednom místě</p></section><button id="sync">Obnovit</button></div></header><main><nav class="nav" aria-label="Přehled"><button data-view="new" aria-current="true">Nové a změněné <span class="nav-count" id="count-new"></span></button><button data-view="mine">Moje úkoly <span class="nav-count" id="count-mine"></span></button><button data-view="helpdesk">Helpdesk <span class="nav-count" id="count-helpdesk"></span></button><a class="map-link" href="mapa">Mapa zákazníků</a></nav><section class="panel"><div class="toolbar"><div><div class="page-heading"><h2 id="title">Nové a změněné</h2><span id="status" class="status" role="status">Načítám přehled…</span></div><p class="sub">Stáří od přijetí: upozornění po 24 h · zvýraznění po 72 h</p></div><input id="search" type="search" placeholder="Hledat úkol nebo provozovnu" aria-label="Hledat úkol nebo provozovnu"></div><p class="results" id="results" aria-live="polite"></p><div id="list"></div></section></main>
 <script>
 const appPath=location.pathname.startsWith('/redmine/')?'/redmine':'';
