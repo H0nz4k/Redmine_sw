@@ -91,9 +91,9 @@ def _event(key, kind, issue, who, when, base, message):
 
 def _digest_excerpt(value, limit=340):
     """Conservative extractive summary: never claim actions absent from Redmine."""
-    value = re.sub(r"\\s+", " ", str(value or "")).strip()
-    value = re.sub(r"[<>\\[\\]`*_#|~]", " ", value)
-    value = re.sub(r"\\s+", " ", value).strip()
+    value = re.sub(r"\s+", " ", str(value or "")).strip()
+    value = re.sub(r"[<>\[\]`*_#|~]", " ", value)
+    value = re.sub(r"\s+", " ", value).strip()
     if len(value) <= limit:
         return value
     cut = value[:limit].rsplit(" ", 1)[0]
