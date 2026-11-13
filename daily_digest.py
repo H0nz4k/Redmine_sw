@@ -304,12 +304,74 @@ def read_report(connect, day):
     return (REPORT_DIR / (day + ".md")).read_text(encoding="utf-8")
 
 
-def due(connect, now=None):
+def pending_cutoffs(connect, now=None, max_days=366):
+    """Generate separate report for every missed local reporting day.
+
+    Reports represent intervals between scheduled local cutoffs.  A DST
+    transition can make an interval 23 or 25 hours long; this is intentional.
+    """
     now = _utc(now or datetime.now(timezone.utc))
-    local = now.astimezone(TZ)
-    hour, minute = _clock(get_settings(connect, now)["time"])
-    if (local.hour, local.minute) < (hour, minute):
-        return False
     with connect() as db:
         _schema(db)
-        return db.execute("SELECT 1 FROM digest_reports WHERE day=?", (local.date().isoformat(),)).fetchone() is None
+        latest = db.execute(
+            "SELECT day FROM digest_reports ORDER BY day DESC LIMIT 1"
+        ).fetchone()
+        setting = db.execute(
+            "SELECT value FROM digest_settings WHERE key='time'"
+        ).fetchone()
+    hh, mm = _clock(setting[0] if setting else DEFAULT_TIME)
+    today = now.astimezone(TZ).date()
+    current_day = (datetime.fromisoformat(latest[0]).date() + timedelta(days=1)
+                   if latest else today)
+    pending = []
+    while current_day <= today and len(pending) < max_days:
+        cutoff = datetime.combine(current_day, time(hh, mm), tzinfo=TZ).astimezone(timezone.utc)
+        if cutoff > now:
+            break
+        pending.append(cutoff)
+        current_day += timedelta(days=1)
+    return pending
+
+
+def due(connect, now=None):
+    return bool(pending_cutoffs(connect, now, max_days=1))
+
+
+def generate_missed_reports(connect, issues, request, base, now=None, max_days=366):
+    """Catch up chronologically; failed day is not skipped or marked complete."""
+    results = []
+    for cutoff in pending_cutoffs(connect, now, max_days=max_days):
+        results.append(generate(connect, issues, request, base, now=cutoff))
+    return results
+
+
+_JOB_LOCK = threading.Lock()
+_JOB = {"state": "idle", "result": None, "error": None}
+
+
+def manual_job_status():
+    with _JOB_LOCK:
+        return dict(_JOB)
+
+
+def launch_manual_report(connect, issues, request, base):
+    """Return immediately; long Redmine API calls happen in a daemon worker."""
+    with _JOB_LOCK:
+        if _JOB["state"] == "running":
+            return {"accepted": False, **_JOB}
+        if _LOCK.locked():
+            return {"accepted": False, "state": "running", "result": None, "error": None}
+        _JOB.update(state="running", result=None, error=None)
+
+    def task():
+        try:
+            result = generate(connect, issues, request, base)
+        except Exception as exc:
+            with _JOB_LOCK:
+                _JOB.update(state="error", result=None, error=str(exc)[:300])
+        else:
+            with _JOB_LOCK:
+                _JOB.update(state="done", result=result, error=None)
+
+    threading.Thread(target=task, name="redmine-manual-digest", daemon=True).start()
+    return {"accepted": True, "state": "running"}
