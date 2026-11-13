@@ -3,6 +3,7 @@ import re
 from contextlib import contextmanager
 import os
 import sqlite3
+import socketserver
 import threading
 import time
 import urllib.parse
@@ -19,6 +20,8 @@ CUSTOMER_SCAN_INTERVAL = max(900, int(os.environ.get('CUSTOMER_SCAN_SECONDS', '3
 MODEL = os.environ.get('OLLAMA_MODEL', '')
 MAP_KEY = os.environ.get('MAPY_API_KEY', '')
 CUSTOMERS = Path(os.environ.get('CUSTOMERS_FILE', 'data/customers.json'))
+UNIX_SOCKET = os.environ.get('REDMINE_UNIX_SOCKET', '')
+ALLOWED_ORIGINS = {value.strip() for value in os.environ.get('REDMINE_ALLOWED_ORIGINS', '').split(',') if value.strip()}
 WORDS = ('terminál', 'terminal', 'snímač', 'snímac', 'čtečk', 'cteck', 'tiskárn', 'tiskarn', 'klávesnic', 'klavesnic', 'reproduktor', 'hardware', 'počítač', 'pocitac', ' pc ', 'pc box')
 
 def request(path, params=None):
@@ -287,7 +290,8 @@ class Handler(BaseHTTPRequestHandler):
         else:
             self.send({'error': 'Nenalezeno'}, status=404)
     def do_POST(self):
-        if self.headers.get('Origin') not in (None, 'http://127.0.0.1:' + str(self.server.server_port), 'http://localhost:' + str(self.server.server_port)):
+        allowed = {None, 'http://127.0.0.1:' + str(self.server.server_port), 'http://localhost:' + str(self.server.server_port)} | ALLOWED_ORIGINS
+        if self.headers.get('Origin') not in allowed:
             self.send({'error':'Nepovolený původ'}, status=403); return
         try:
             if self.path == '/api/scan-status':
@@ -322,9 +326,25 @@ class Handler(BaseHTTPRequestHandler):
         except Exception as exc:
             self.send({'error':str(exc)[:300]}, status=400)
 
+if hasattr(socketserver, 'UnixStreamServer'):
+    class UnixHTTPServer(socketserver.ThreadingMixIn, socketserver.UnixStreamServer):
+        daemon_threads = True
+        def __init__(self, path, port):
+            self.server_port = port
+            super().__init__(path, Handler)
+            os.chmod(path, 0o666)
+
 if __name__ == '__main__':
     threading.Thread(target=worker, daemon=True).start()
     threading.Thread(target=customer_scan_worker, daemon=True).start()
     port = int(os.environ.get('PORT', '4091'))
+    if UNIX_SOCKET:
+        socket_path = Path(UNIX_SOCKET)
+        if socket_path.exists():
+            if not socket_path.is_socket():
+                raise RuntimeError('Cesta pro socket není socket.')
+            socket_path.unlink()
+        local_socket = UnixHTTPServer(UNIX_SOCKET, port)
+        threading.Thread(target=local_socket.serve_forever, daemon=True).start()
     print(f'Redmine asistent: http://127.0.0.1:{port}', flush=True)
     ThreadingHTTPServer(('127.0.0.1', port), Handler).serve_forever()
