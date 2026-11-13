@@ -15,6 +15,7 @@ BASE = os.environ.get('REDMINE_URL', 'https://redmine.altisima.cz').rstrip('/')
 KEY = os.environ.get('REDMINE_API_KEY', '')
 DB = os.environ.get('REDMINE_DB', 'redmine.sqlite3')
 INTERVAL = int(os.environ.get('SYNC_SECONDS', '300'))
+CUSTOMER_SCAN_INTERVAL = max(900, int(os.environ.get('CUSTOMER_SCAN_SECONDS', '3600')))
 MODEL = os.environ.get('OLLAMA_MODEL', '')
 MAP_KEY = os.environ.get('MAPY_API_KEY', '')
 CUSTOMERS = Path(os.environ.get('CUSTOMERS_FILE', 'data/customers.json'))
@@ -191,7 +192,12 @@ def scan_customer_issues():
                 scan_state['done'] += 1
                 time.sleep(0.1)
         finally:
-            scan_state['running'] = False
+            try:
+                with connect() as db:
+                    db.execute("INSERT INTO meta VALUES ('customer_scan_completed', ?) ON CONFLICT(key) DO UPDATE SET value=excluded.value", (str(time.time()),))
+                    db.execute("INSERT INTO meta VALUES ('customer_scan_errors', ?) ON CONFLICT(key) DO UPDATE SET value=excluded.value", (str(scan_state['errors']),))
+            finally:
+                scan_state['running'] = False
     threading.Thread(target=run, daemon=True).start()
 
 
@@ -214,6 +220,27 @@ def summary(issue):
     req = urllib.request.Request('http://127.0.0.1:11434/api/generate', body, {'Content-Type': 'application/json'})
     with urllib.request.urlopen(req, timeout=120) as response:
         return json.load(response)['response']
+
+def customer_scan_due(now=None):
+    with connect() as db:
+        meta = dict(db.execute("SELECT key, value FROM meta WHERE key IN ('customer_scan_completed', 'customer_scan_errors')"))
+    try:
+        completed = float(meta.get('customer_scan_completed', '0'))
+        errors = int(meta.get('customer_scan_errors', '0'))
+    except ValueError:
+        return True
+    interval = 900 if errors else CUSTOMER_SCAN_INTERVAL
+    return (time.time() if now is None else now) - completed >= interval
+
+def customer_scan_worker():
+    while True:
+        try:
+            if KEY and customer_scan_due():
+                scan_customer_issues()
+        except Exception:
+            pass
+        time.sleep(60)
+
 
 def worker():
     while True:
@@ -297,6 +324,7 @@ class Handler(BaseHTTPRequestHandler):
 
 if __name__ == '__main__':
     threading.Thread(target=worker, daemon=True).start()
+    threading.Thread(target=customer_scan_worker, daemon=True).start()
     port = int(os.environ.get('PORT', '4091'))
     print(f'Redmine asistent: http://127.0.0.1:{port}', flush=True)
     ThreadingHTTPServer(('127.0.0.1', port), Handler).serve_forever()

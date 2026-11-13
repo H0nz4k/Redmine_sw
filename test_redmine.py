@@ -66,6 +66,19 @@ class SyncTests(unittest.TestCase):
             with patch.object(redmine, 'request', return_value={'issue': bad}):
                 with self.assertRaises(ValueError): redmine.add_redmine_customer(456)
 
+    def test_customer_scan_schedule(self):
+        self.assertTrue(redmine.customer_scan_due(now=5000))
+        with redmine.connect() as db:
+            db.execute("INSERT INTO meta VALUES ('customer_scan_completed', '4000')")
+            db.execute("INSERT INTO meta VALUES ('customer_scan_errors', '0')")
+        with patch.object(redmine, 'CUSTOMER_SCAN_INTERVAL', 3600):
+            self.assertFalse(redmine.customer_scan_due(now=5000))
+            self.assertTrue(redmine.customer_scan_due(now=7600))
+        with redmine.connect() as db:
+            db.execute("UPDATE meta SET value='1' WHERE key='customer_scan_errors'")
+        self.assertFalse(redmine.customer_scan_due(now=4899))
+        self.assertTrue(redmine.customer_scan_due(now=4900))
+
     def test_pagination(self):
         responses = [{'issues':[{'id':1}], 'total_count':2}, {'issues':[{'id':2}], 'total_count':2}]
         with patch.object(redmine, 'request', side_effect=responses):
