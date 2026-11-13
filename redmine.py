@@ -46,6 +46,8 @@ def connect():
     db.execute('CREATE TABLE IF NOT EXISTS issues (id INTEGER PRIMARY KEY, payload TEXT NOT NULL, updated TEXT NOT NULL, first_seen TEXT NOT NULL)')
     db.execute('CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT NOT NULL)')
     db.execute('CREATE TABLE IF NOT EXISTS events (id INTEGER PRIMARY KEY, issue_id INTEGER NOT NULL, kind TEXT NOT NULL, seen_at TEXT NOT NULL)')
+    db.execute('CREATE TABLE IF NOT EXISTS customer_issue_status (issue_id INTEGER PRIMARY KEY, payload TEXT NOT NULL, checked_at TEXT NOT NULL)')
+    db.execute('CREATE TABLE IF NOT EXISTS added_customers (issue_id INTEGER PRIMARY KEY, name TEXT NOT NULL, address TEXT NOT NULL)')
     db.execute('CREATE TABLE IF NOT EXISTS customer_locations (issue_id INTEGER PRIMARY KEY, lat REAL NOT NULL, lon REAL NOT NULL)')
     try:
         with db:
@@ -90,31 +92,107 @@ def snapshot():
 def customers():
     data = json.loads(CUSTOMERS.read_text(encoding='utf-8')) if CUSTOMERS.exists() else []
     with connect() as db:
+        stored_ids = {c['issue_id'] for c in data}
+        data.extend({'issue_id': i, 'name': n, 'address': a, 'poe': '', 'origin': 'Redmine'} for i, n, a in db.execute('SELECT issue_id, name, address FROM added_customers') if i not in stored_ids)
         locations = {i: (lat, lon) for i, lat, lon in db.execute('SELECT issue_id, lat, lon FROM customer_locations')}
         issue_ids = {i for (i,) in db.execute('SELECT id FROM issues')}
+        states = {i: json.loads(payload) for i, payload in db.execute('SELECT issue_id, payload FROM customer_issue_status')}
     for customer in data:
         manual = locations.get(customer['issue_id'])
         customer['location'] = manual or customer.get('candidate_location')
         customer['location_source'] = 'Ručně potvrzeno' if manual else customer.get('candidate_source', '')
         customer['in_open_issues'] = customer['issue_id'] in issue_ids
+        customer['related_status'] = states.get(customer['issue_id'])
     return {'customers': data, 'map_configured': bool(MAP_KEY), 'base_url': BASE}
+
+def redmine_customers():
+    if not KEY:
+        raise ValueError('Chybí REDMINE_API_KEY.')
+    present = {c['issue_id'] for c in customers()['customers']}
+    result = []
+    for item in issues({'project_id': 'zakaznici', 'tracker_id': 4, 'status_id': '*'}):
+        fields = {f.get('name'): f.get('value') for f in item.get('custom_fields', [])}
+        result.append({'id': item['id'], 'name': item.get('subject', ''),
+                       'address': fields.get('Adresa') or '', 'gps': fields.get('GPS') or '',
+                       'status': item.get('status', {}).get('name', ''), 'in_map': item['id'] in present})
+    return result
+
+def customer_details(iid):
+    if iid not in {c['issue_id'] for c in customers()['customers']}:
+        raise ValueError('Zákazník nebyl nalezen.')
+    if not KEY:
+        raise ValueError('Chybí REDMINE_API_KEY.')
+    item = request(f'/issues/{iid}.json')['issue']
+    if item.get('project', {}).get('id') != 1 or item.get('tracker', {}).get('id') != 4:
+        raise ValueError('Záznam není zákazník v projektu Zákazníci.')
+    fields = {f.get('name'): f.get('value') for f in item.get('custom_fields', [])}
+    return {'name': item.get('subject', ''), 'address': fields.get('Adresa') or '', 'gps': fields.get('GPS') or ''}
+
+
+def add_redmine_customer(iid):
+    if not KEY:
+        raise ValueError('Chybí REDMINE_API_KEY.')
+    item = request(f'/issues/{iid}.json')['issue']
+    if item.get('project', {}).get('id') != 1 or item.get('tracker', {}).get('id') != 4:
+        raise ValueError('Záznam není zákazník v projektu Zákazníci.')
+    fields = {f.get('name'): f.get('value') for f in item.get('custom_fields', [])}
+    address = fields.get('Adresa') or ''
+    if not isinstance(address, str): address = ''
+    with connect() as db:
+        db.execute('INSERT INTO added_customers VALUES (?, ?, ?) ON CONFLICT(issue_id) DO NOTHING',
+                   (iid, item.get('subject', ''), address))
+
 
 def related_issues(customer_id):
     if customer_id not in {c['issue_id'] for c in customers()['customers']}:
         raise ValueError('Zákazník nebyl nalezen.')
     if not KEY:
         raise ValueError('Chybí REDMINE_API_KEY.')
-    found = []
-    for item in snapshot()['issues']:
-        if item['id'] == customer_id:
-            continue
-        detail = request(f"/issues/{item['id']}.json", {'include': 'relations'})['issue']
-        ids = {detail.get('parent', {}).get('id')}
-        for relation in detail.get('relations', []):
-            ids.update((relation.get('issue_id'), relation.get('issue_to_id')))
-        if customer_id in ids:
-            found.append({'id': item['id'], 'subject': item.get('subject', ''), 'status': item.get('status', {}).get('name', '')})
-    return found
+    item = request(f'/issues/{customer_id}.json', {'include': 'relations,children'})['issue']
+    ids = {r.get('issue_to_id') if r.get('issue_id') == customer_id else r.get('issue_id') for r in item.get('relations', [])}
+    ids.update(c.get('id') for c in item.get('children', []))
+    ids.discard(None); ids.discard(customer_id)
+    results = []
+    sorted_ids = sorted(ids)
+    for i in range(0, len(sorted_ids), 100):
+        batch = sorted_ids[i:i+100]
+        for status in ('open', 'closed'):
+            for issue in issues({'issue_id': ','.join(map(str, batch)), 'status_id': status}):
+                if issue['id'] in ids:
+                    results.append({'id': issue['id'], 'subject': issue.get('subject', ''),
+                                    'status': issue.get('status', {}).get('name', ''), 'open': status == 'open'})
+    known = {i['id'] for i in results}
+    missing = len(ids - known)
+    state = 'open' if any(i['open'] for i in results) else 'unknown' if missing else 'closed' if results else 'none'
+    result = {'state': state, 'issues': results, 'inaccessible': missing,
+              'checked_at': datetime.now(timezone.utc).isoformat()}
+    with connect() as db:
+        db.execute('INSERT INTO customer_issue_status VALUES (?, ?, ?) ON CONFLICT(issue_id) DO UPDATE SET payload=excluded.payload, checked_at=excluded.checked_at', (customer_id, json.dumps(result, ensure_ascii=False), result['checked_at']))
+    return result
+
+scan_lock = threading.Lock()
+scan_state = {'running': False, 'done': 0, 'total': 0, 'errors': 0}
+
+def scan_customer_issues():
+    with scan_lock:
+        if scan_state['running']:
+            return
+        ids = [c['issue_id'] for c in customers()['customers']]
+        scan_state.update(running=True, done=0, total=len(ids), errors=0)
+    def run():
+        try:
+            for iid in ids:
+                try:
+                    related_issues(iid)
+                except Exception:
+                    with connect() as db:
+                        db.execute('DELETE FROM customer_issue_status WHERE issue_id=?', (iid,))
+                    scan_state['errors'] += 1
+                scan_state['done'] += 1
+                time.sleep(0.1)
+        finally:
+            scan_state['running'] = False
+    threading.Thread(target=run, daemon=True).start()
 
 
 def save_location(iid, lat, lon):
@@ -160,6 +238,8 @@ class Handler(BaseHTTPRequestHandler):
         elif self.path in ('/vendor/leaflet/leaflet.js', '/vendor/leaflet/leaflet.css'):
             asset = Path(__file__).parent / self.path.lstrip('/')
             self.send(asset.read_bytes(), 'text/javascript; charset=utf-8' if self.path.endswith('.js') else 'text/css; charset=utf-8')
+        elif self.path == '/api/scan-status':
+            self.send(dict(scan_state))
         elif self.path == '/api/customers':
             self.send(customers())
         elif self.path.startswith('/maptiles/'):
@@ -183,9 +263,19 @@ class Handler(BaseHTTPRequestHandler):
         if self.headers.get('Origin') not in (None, 'http://127.0.0.1:' + str(self.server.server_port), 'http://localhost:' + str(self.server.server_port)):
             self.send({'error':'Nepovolený původ'}, status=403); return
         try:
-            if self.path.startswith('/api/customer-issues/'):
+            if self.path == '/api/scan-status':
+                scan_customer_issues()
+                self.send(dict(scan_state))
+            elif self.path == '/api/redmine-customers':
+                self.send({'customers': redmine_customers()})
+            elif self.path.startswith('/api/customer-details/'):
+                self.send(customer_details(int(self.path.rsplit('/', 1)[1])))
+            elif self.path.startswith('/api/add-customer/'):
+                add_redmine_customer(int(self.path.rsplit('/', 1)[1]))
+                self.send({'ok': True})
+            elif self.path.startswith('/api/customer-issues/'):
                 iid = int(self.path.rsplit('/', 1)[1])
-                self.send({'issues': related_issues(iid)})
+                self.send(related_issues(iid))
             elif self.path.startswith('/api/location/'):
                 iid = int(self.path.rsplit('/', 1)[1])
                 length = int(self.headers.get('Content-Length', '0'))

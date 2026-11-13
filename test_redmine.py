@@ -39,8 +39,32 @@ class SyncTests(unittest.TestCase):
             with self.assertRaises(ValueError): redmine.save_location(456, 50, 15)
             self.run_sync([self.item])
             detail = {'issue': {'id': 1, 'relations': [{'issue_id': 1, 'issue_to_id': 123}]}}
-            with patch.object(redmine, 'request', return_value=detail):
-                self.assertEqual(redmine.related_issues(123)[0]['id'], 1)
+            with patch.object(redmine, 'request', return_value=detail), patch.object(redmine, 'issues', side_effect=lambda params: iter([self.item] if params['status_id'] == 'open' else [])):
+                result = redmine.related_issues(123)
+                self.assertEqual(result['issues'][0]['id'], 1)
+                self.assertEqual(result['state'], 'open')
+            with patch.object(redmine, 'request', return_value=detail), patch.object(redmine, 'issues', return_value=iter([])):
+                self.assertEqual(redmine.related_issues(123)['state'], 'unknown')
+            with patch.object(redmine, 'request', return_value=detail), patch.object(redmine, 'issues', side_effect=lambda params: iter([self.item] if params['status_id'] == 'closed' else [])):
+                self.assertEqual(redmine.related_issues(123)['state'], 'closed')
+            with patch.object(redmine, 'request', return_value={'issue': {'id': 123}}):
+                self.assertEqual(redmine.related_issues(123)['state'], 'none')
+
+    def test_compare_and_add_redmine_customer(self):
+        data = [{'issue_id': 123, 'name': 'A', 'address': '', 'poe': ''}]
+        path = os.path.join(self.tmp.name, 'customers.json')
+        with open(path, 'w', encoding='utf-8') as f: json.dump(data, f)
+        customer = {'id': 456, 'subject': 'B', 'project': {'id': 1}, 'tracker': {'id': 4}, 'custom_fields': [{'name': 'Adresa', 'value': 'Test 1'}]}
+        with patch.object(redmine, 'CUSTOMERS', redmine.Path(path)), patch.object(redmine, 'issues', return_value=iter([customer])):
+            self.assertFalse(redmine.redmine_customers()[0]['in_map'])
+            with patch.object(redmine, 'request', return_value={'issue': customer}):
+                redmine.add_redmine_customer(456)
+                self.assertEqual(redmine.customer_details(456)['address'], 'Test 1')
+                redmine.add_redmine_customer(456)
+            self.assertEqual(len(redmine.customers()['customers']), 2)
+            bad = dict(customer, project={'id': 99})
+            with patch.object(redmine, 'request', return_value={'issue': bad}):
+                with self.assertRaises(ValueError): redmine.add_redmine_customer(456)
 
     def test_pagination(self):
         responses = [{'issues':[{'id':1}], 'total_count':2}, {'issues':[{'id':2}], 'total_count':2}]
