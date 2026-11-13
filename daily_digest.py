@@ -3,6 +3,7 @@ import json
 import os
 import re
 import threading
+import tempfile
 from datetime import datetime, time, timedelta, timezone
 from pathlib import Path
 from zoneinfo import ZoneInfo
@@ -121,15 +122,15 @@ def _stories(events, contexts):
         else:
             opening = "V projektu " + project + " se řešil požadavek " + link + "."
         sentences = [opening]
-        description = _digest_excerpt(context.get("description"))
+        description = _digest_excerpt(context.get("description"), 180)
         if description:
             sentences.append("Zadání uvádí: " + description + ".")
         notes = context.get("notes", [])
-        for note in notes[-3:]:
-            excerpt = _digest_excerpt(note.get("text"), 260)
+        for note in notes[-2:]:
+            excerpt = _digest_excerpt(note.get("text"), 140)
             if excerpt:
                 sentences.append("V komentáři " + note["author"] + " uvedl(a): " + excerpt + ".")
-        if len(notes) > 3:
+        if len(notes) > 2:
             sentences.append("Další komentáře jsou v původním úkolu.")
         if any(e["kind"] == "done" for e in changes):
             sentences.append("V historii tohoto období je také zaznamenána změna na vyřešený nebo uzavřený stav.")
@@ -160,6 +161,25 @@ def _collect(start, end, issues, request, base, previous_projects):
             "author": _clean(detail.get("author", item.get("author", {})).get("name")),
             "description": detail.get("description") or item.get("description") or "",
             "notes": [],
+            "henk_source": {
+                "id": int(item["id"]),
+                "subject": detail.get("subject") or item.get("subject") or "",
+                "project": detail.get("project") or item.get("project") or {},
+                "status": detail.get("status") or item.get("status") or {},
+                "author": detail.get("author") or item.get("author") or {},
+                "description": detail.get("description") or item.get("description") or "",
+                "created_on": detail.get("created_on") or item.get("created_on"),
+                "updated_on": detail.get("updated_on") or item.get("updated_on"),
+                "journals": [
+                    {
+                        "id": j.get("id"), "created_on": j.get("created_on"),
+                        "author": j.get("user") or {}, "notes": j.get("notes") or "",
+                        "details": j.get("details") or [],
+                    }
+                    for j in detail["journals"]
+                    if j.get("created_on") and _utc(j["created_on"]) <= end
+                ],
+            },
         }
         for journal in detail["journals"]:
             changed = journal.get("created_on")
@@ -240,6 +260,53 @@ def _markdown(events, start, end, contexts=None):
     return "\n".join(parts)
 
 
+def _save_private_henk_source(day, start, end, events, contexts):
+    """Store complete source material off-web for a later local Henk analysis.
+
+    Only issue IDs with an event in this report are included. Source descriptions
+    are current Redmine snapshots, not reconstructed historical descriptions.
+    Journal entries after the report cutoff are intentionally excluded.
+    """
+    changed_ids = sorted({
+        int(event["url"].rsplit("/", 1)[1]) for event in events
+        if "/issues/" in event["url"]
+    })
+    payload = {
+        "schema_version": 1,
+        "purpose": "local_henk_digest_input_only",
+        "report_day": day,
+        "period_start_utc": _stamp(start),
+        "period_end_utc": _stamp(end),
+        "captured_at_utc": _stamp(datetime.now(timezone.utc)),
+        "description_note": "Popis je snímek v čase načtení, nikoliv historická verze.",
+        "issues": [
+            contexts[iid]["henk_source"]
+            for iid in changed_ids if iid in contexts
+        ],
+    }
+    target_dir = REPORT_DIR / "henk-input"
+    target_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
+    target_dir.chmod(0o700)
+    path = target_dir / (day + ".json")
+    temp_path = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            mode="w", encoding="utf-8", dir=target_dir,
+            prefix=".digest-", suffix=".tmp", delete=False
+        ) as stream:
+            temp_path = Path(stream.name)
+            os.fchmod(stream.fileno(), 0o600)
+            json.dump(payload, stream, ensure_ascii=False, indent=2)
+            stream.write("\n")
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.replace(temp_path, path)
+    finally:
+        if temp_path is not None:
+            temp_path.unlink(missing_ok=True)
+    return path
+
+
 def generate(connect, issues, request, base, now=None):
     end = _utc(now or datetime.now(timezone.utc))
     day = end.astimezone(TZ).date().isoformat()
@@ -262,6 +329,7 @@ def generate(connect, issues, request, base, now=None):
         events, current_projects, contexts = _collect(start, end, issues, request, base, projects)
         markdown = _markdown(events, start, end, contexts)
         REPORT_DIR.mkdir(mode=0o700, parents=True, exist_ok=True)
+        _save_private_henk_source(day, start, end, events, contexts)
         path = REPORT_DIR / (day + ".md")
         temp = REPORT_DIR / (day + ".tmp")
         with temp.open("w", encoding="utf-8") as stream:

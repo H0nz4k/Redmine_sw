@@ -59,3 +59,9 @@ Nad detailním chronologickým soupisem se vytváří část **Co se skutečně 
 ### Spolehlivější generování (0.1.0-dev.4)
 
 Ruční generování používá samostatný serverový worker: `POST /api/digest/generate` zahájí práci a vrací HTTP 202, stav lze načíst přes `GET /api/digest/job`. Při opakovaném kliknutí během běhu se druhé generování nespustí. Prohlížeč dotazuje stav a po dokončení obnoví historii. Plánovaný worker vytváří samostatný denní soubor pro každou vynechanou uzávěrku od posledního úspěšného reportu; při chybě nepřeskakuje nedokončený den. Respektuje lokální čas Europe/Prague i změnu letního času. Testy pokrývají více dní po výpadku, opakovaný běh bez duplicit, DST a jediný běžící ruční úkol.
+
+### Privátní podklady pro Henka a průběh generování (0.1.0-dev.5)
+
+Kromě stručného Markdown reportu ukládá aplikace do `REDMINE_REPORT_DIR/henk-input/YYYY-MM-DD.json` samostatný neveřejný soubor pro pozdější AI analýzu. Obsahuje úplné aktuální popisy dotčených úkolů a jejich komentáře i journal historii do uzávěrky reportu. Popisy jsou snapshotem v okamžiku načtení a nelze je zaměňovat za historické znění. Podkladový adresář má práva 0700, soubor 0600 a nesmí se veřejně zpřístupňovat ani commitovat do Gitu. Webové API tyto podklady neposkytuje. V samotném reportu zůstává jen stručný výtah s odkazy (nikoli plný obsah).
+
+Tlačítko „Vygenerovat teď“ zobrazuje animovaný indikátor po dobu serverového jobu a po znovunačtení stránky se na již běžící úlohu znovu připojí. **Skutečné inteligentní shrnutí Henkem není zatím implementované**; je uvedené samostatně v issue #7.

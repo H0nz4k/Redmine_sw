@@ -10,6 +10,10 @@ h1{font-size:1.25rem;margin:0}h2{font-size:1.05rem;margin:0 0 12px}a{color:#80c7
 .controls{display:flex;gap:12px;align-items:end;flex-wrap:wrap}
 label{display:grid;gap:5px;color:#c6d3e6}button,input,select{font:inherit;border:1px solid #475672;border-radius:8px;padding:9px 11px}
 input,select{background:#0e1626;color:#fff}button{background:#2851a5;color:white;cursor:pointer}button.secondary{background:#263348}button:disabled{opacity:.6;cursor:wait}
+#generate{display:inline-flex;align-items:center;gap:9px}
+.spinner{display:inline-block;width:17px;height:17px;border:2px solid #aac5ef;border-top-color:#fff;border-radius:50%;animation:spin .8s linear infinite}
+.spinner[hidden]{display:none}
+@keyframes spin{to{transform:rotate(360deg)}}
 aside{color:#b4c3da;font-size:.87rem;margin-top:9px}#message{min-height:1.4em}
 .layout{display:grid;grid-template-columns:215px minmax(0,1fr);gap:14px}
 #history{display:flex;flex-direction:column;gap:6px}#history button{text-align:left;background:#24334a}
@@ -21,7 +25,7 @@ aside{color:#b4c3da;font-size:.87rem;margin-top:9px}#message{min-height:1.4em}
 <main><header><h1>Denní přehled firmy</h1><a id="back" href=".">Zpět na úkoly</a></header>
 <section class="card"><h2>Nastavení denního souhrnu</h2>
 <div class="controls"><label>Čas generování (Praha)<input id="digest-time" type="time" value="17:30"></label>
-<button id="save">Uložit čas</button><button id="generate" class="secondary">Vygenerovat teď</button></div>
+<button id="save">Uložit čas</button><button id="generate" class="secondary"><span class="spinner" id="digest-spinner" hidden aria-hidden="true"></span><span>Vygenerovat teď</span></button></div>
 <aside id="next">Načítám plán…</aside><p id="message" role="status"></p></section>
 <section class="layout"><section class="card"><h2>Historie reportů</h2><div id="history">Načítám…</div></section>
 <article class="card" id="report"><h2>Vyber den z historie</h2></article></section>
@@ -84,14 +88,26 @@ async function showCompletedReport(){
  announce('Report '+result.day+' uložen ('+result.event_count+' událostí).');
 }
 $('#generate').onclick=async()=>{
- const b=$('#generate');b.disabled=true;
+ const b=$('#generate');b.disabled=true;$('#digest-spinner').hidden=false;
  announce('Generování běží na serveru, prohlížeč nemusí zůstat otevřený…');
  try{
   const r=await api('/api/digest/generate',{method:'POST'});const d=await r.json();
   if(!r.ok)throw Error(d.error||'Server už generuje jiný report');
   await showCompletedReport();
  }catch(e){announce('Generování selhalo: '+e.message)}
- finally{b.disabled=false}
+ finally{b.disabled=false;$('#digest-spinner').hidden=true}
 };
-Promise.all([loadSettings(),loadHistory()]).catch(e=>announce(e.message));
+async function restoreRunningJob(){
+ const response=await api('/api/digest/job');
+ if(!response.ok)return;
+ const job=await response.json();
+ if(job.state!=='running')return;
+ const button=$('#generate');
+ button.disabled=true;$('#digest-spinner').hidden=false;
+ announce('Generování stále běží na serveru…');
+ try{await showCompletedReport()}
+ catch(err){announce('Generování selhalo: '+err.message)}
+ finally{button.disabled=false;$('#digest-spinner').hidden=true}
+}
+Promise.all([loadSettings(),loadHistory(),restoreRunningJob()]).catch(e=>announce(e.message));
 </script></body></html>
