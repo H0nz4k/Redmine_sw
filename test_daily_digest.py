@@ -230,6 +230,47 @@ class DigestTests(unittest.TestCase):
         self.assertEqual(digest.manual_job_status()["state"], "done")
         self.assertEqual(digest.manual_job_status()["result"]["event_count"], 3)
 
+    def test_henk_json_keeps_full_discussion_private_and_separate(self):
+        import json
+
+        long_description = "Chyba na terminálu. " + ("Podrobnosti výpadku čtečky. " * 36) + "POSLEDNI_VETA_ZADANI"
+        old_comment = "Starší kontext: první pokus před dneškem."
+        today_comment = "Dnes Jarda zjistil potíže s ověřením DKIM. " + ("Detaily diagnostiky. " * 32) + "POSLEDNI_VETA_KOMENTARE"
+        tomorrow_comment = "Zítřejší zpráva, která do dnešního exportu nepatří."
+        journal = [
+            {"id": 8, "created_on": "2026-11-12T11:00:00Z",
+             "user": {"name": "Jarda"}, "details": [],
+             "notes": old_comment},
+            {"id": 9, "created_on": "2026-11-13T14:00:00Z",
+             "user": {"name": "Jarda"}, "details": [],
+             "notes": today_comment},
+            {"id": 10, "created_on": "2026-11-14T09:00:00Z",
+             "user": {"name": "Petr"}, "details": [],
+             "notes": tomorrow_comment},
+        ]
+        self.issue(91, "2026-11-12T10:00:00Z", "2026-11-14T09:00:00Z", journals=journal)
+        self.details[91]["description"] = long_description
+        self.generate("2026-11-13T16:30:00+00:00")
+
+        source_dir = digest.REPORT_DIR / "henk-input"
+        path = source_dir / "2026-11-13.json"
+        self.assertTrue(path.is_file())
+        self.assertEqual(stat.S_IMODE(source_dir.stat().st_mode), 0o700)
+        self.assertEqual(stat.S_IMODE(path.stat().st_mode), 0o600)
+        source = json.loads(path.read_text(encoding="utf-8"))
+        self.assertEqual(source["purpose"], "local_henk_digest_input_only")
+        self.assertEqual(source["issues"][0]["description"], long_description)
+        self.assertEqual(
+            [j["notes"] for j in source["issues"][0]["journals"]],
+            [old_comment, today_comment],
+        )
+        self.assertEqual(source["report_day"], "2026-11-13")
+        report = digest.read_report(self.connect, "2026-11-13")
+        self.assertNotIn("POSLEDNI_VETA_ZADANI", report)
+        self.assertNotIn("POSLEDNI_VETA_KOMENTARE", report)
+        self.assertNotIn(tomorrow_comment, report)
+        self.assertNotIn("henk-input", report)
+
     def test_access_is_restricted_to_known_archive_dates(self):
         with self.assertRaisesRegex(ValueError, "Neplatné datum"):
             digest.read_report(self.connect, "../secrets")
