@@ -1,4 +1,5 @@
 import json
+import hashlib
 import re
 from contextlib import contextmanager
 import os
@@ -8,9 +9,11 @@ import threading
 import time
 import urllib.parse
 import urllib.request
+import urllib.error
 from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from suggestions import customer_suggestions
 
 BASE = os.environ.get('REDMINE_URL', 'https://redmine.altisima.cz').rstrip('/')
 KEY = os.environ.get('REDMINE_API_KEY', '')
@@ -185,6 +188,99 @@ def add_redmine_customer(iid):
                    (iid, item.get('subject', ''), address))
 
 
+def helpdesk_members():
+    members = []
+    offset = 0
+    while True:
+        data = request('/projects/helpdesk/memberships.json', {'limit': 100, 'offset': offset})
+        batch = data['memberships']
+        members.extend(m['user'] for m in batch if m.get('user'))
+        offset += len(batch)
+        if not batch or offset >= data.get('total_count', len(batch)):
+            break
+    return list({m['id']: m for m in members}.values())
+
+def helpdesk_state_token(issue):
+    relations = sorted((r.get('issue_id', 0), r.get('issue_to_id', 0), r.get('relation_type', '')) for r in issue.get('relations', []))
+    state = {'updated_on': issue.get('updated_on'), 'subject': issue.get('subject'), 'description': issue.get('description'),
+             'assignee': issue.get('assigned_to', {}).get('id'), 'status': issue.get('status', {}).get('id'),
+             'parent': issue.get('parent', {}).get('id'), 'relations': relations}
+    return hashlib.sha256(json.dumps(state, sort_keys=True, ensure_ascii=False).encode('utf-8')).hexdigest()
+
+
+def helpdesk_suggestions(iid):
+    issue = request(f'/issues/{iid}.json', {'include': 'relations'})['issue']
+    if issue.get('project', {}).get('id') != 12:
+        raise ValueError('Nejde o požadavek projektu Helpdesk.')
+    all_customers = redmine_customers()
+    members = helpdesk_members()
+    current = request('/users/current.json')['user']
+    reasons = classify(issue)
+    person = next((m for m in members if m['id'] == current['id']), None) if reasons else None
+    return {'issue_id': iid, 'updated_on': issue['updated_on'], 'state_token': helpdesk_state_token(issue), 'subject': issue.get('subject', ''),
+            'assigned_to': issue.get('assigned_to'), 'linked_customers': find_issue_customers(iid),
+            'customer_candidates': customer_suggestions(issue.get('subject', ''), issue.get('description', ''), all_customers),
+            'assignee_suggestion': {'id': person['id'], 'name': person['name'],
+                                    'reason': 'Možný hardware: ' + ', '.join(reasons)} if person else None,
+            'members': members}
+
+
+def redmine_write(path, method, payload):
+    body = json.dumps(payload).encode('utf-8')
+    req = urllib.request.Request(BASE + path, data=body, method=method,
+                                 headers={'X-Redmine-API-Key': KEY, 'Content-Type': 'application/json', 'Accept': 'application/json'})
+    try:
+        with urllib.request.urlopen(req, timeout=30) as response:
+            response.read()
+    except urllib.error.HTTPError as exc:
+        raise RuntimeError(f'Redmine změnu odmítl (HTTP {exc.code}).') from None
+    except (OSError, TimeoutError):
+        raise RuntimeError('Výsledek zápisu není znám. Před opakováním zkontrolujte Redmine.') from None
+
+def _apply_helpdesk_change(iid, action, target, expected_updated, expected_token):
+    if not KEY or not isinstance(target, int) or isinstance(target, bool) or target <= 0 or not isinstance(expected_updated, str):
+        raise ValueError('Neplatné údaje požadavku.')
+    current = request(f'/issues/{iid}.json', {'include': 'relations'})['issue']
+    if current.get('project', {}).get('id') != 12:
+        raise ValueError('Nejde o požadavek projektu Helpdesk.')
+    if current.get('updated_on') != expected_updated or helpdesk_state_token(current) != expected_token:
+        raise ValueError('Požadavek se mezitím změnil. Načtěte návrhy znovu.')
+    if action == 'assignee':
+        if target not in {m['id'] for m in helpdesk_members()}:
+            raise ValueError('Řešitel není mezi členy projektu Helpdesk.')
+        if current.get('assigned_to', {}).get('id') == target:
+            raise ValueError('Řešitel je již přiřazen.')
+        redmine_write(f'/issues/{iid}.json', 'PUT', {'issue': {'assigned_to_id': target}})
+    elif action == 'customer':
+        customer = request(f'/issues/{target}.json')['issue']
+        if customer.get('project', {}).get('id') != 1 or customer.get('tracker', {}).get('id') != 4:
+            raise ValueError('Cílový záznam není zákazník v projektu Zákazníci.')
+        related = {r.get('issue_to_id') if r.get('issue_id') == iid else r.get('issue_id') for r in current.get('relations', [])}
+        if target in related or current.get('parent', {}).get('id') == target:
+            raise ValueError('Zákazník je již propojen.')
+        redmine_write(f'/issues/{iid}/relations.json', 'POST', {'relation': {'issue_to_id': target, 'relation_type': 'relates'}})
+    else:
+        raise ValueError('Neznámý typ změny.')
+    with connect() as db:
+        db.execute('DELETE FROM issue_customer_links WHERE issue_id=?', (iid,))
+    try:
+        result = request(f'/issues/{iid}.json', {'include': 'relations'})['issue']
+    except Exception:
+        raise RuntimeError('Změna byla odeslána, ale její výsledek nelze ověřit. Před opakováním zkontrolujte Redmine.')
+    if action == 'assignee' and result.get('assigned_to', {}).get('id') != target:
+        raise RuntimeError('Redmine nepotvrdil zvolené přiřazení. Zkontrolujte úkol.')
+    if action == 'customer' and not any(target in (r.get('issue_id'), r.get('issue_to_id')) for r in result.get('relations', [])):
+        raise RuntimeError('Redmine nepotvrdil novou vazbu. Zkontrolujte úkol.')
+    return {'ok': True}
+
+
+helpdesk_write_lock = threading.Lock()
+
+def apply_helpdesk_change(iid, action, target, expected_updated, expected_token):
+    with helpdesk_write_lock:
+        return _apply_helpdesk_change(iid, action, target, expected_updated, expected_token)
+
+
 def related_issues(customer_id):
     if customer_id not in {c['issue_id'] for c in customers()['customers']}:
         raise ValueError('Zákazník nebyl nalezen.')
@@ -332,7 +428,19 @@ class Handler(BaseHTTPRequestHandler):
         if self.headers.get('Origin') not in allowed:
             self.send({'error':'Nepovolený původ'}, status=403); return
         try:
-            if self.path == '/api/scan-status':
+            if self.path.startswith('/api/helpdesk-apply/'):
+                origin = self.headers.get('Origin')
+                if origin not in allowed or origin is None or self.headers.get_content_type() != 'application/json':
+                    self.send({'error': 'Nepovolený požadavek.'}, status=403); return
+                length = int(self.headers.get('Content-Length', '0'))
+                if not 0 < length <= 2048: raise ValueError('Neplatný požadavek.')
+                body = json.loads(self.rfile.read(length))
+                iid = int(self.path.rsplit('/', 1)[1])
+                self.send(apply_helpdesk_change(iid, body.get('action'), body.get('target'), body.get('updated_on'), body.get('state_token')))
+            elif self.path.startswith('/api/helpdesk-suggestions/'):
+                iid = int(self.path.rsplit('/', 1)[1])
+                self.send(helpdesk_suggestions(iid))
+            elif self.path == '/api/scan-status':
                 scan_customer_issues()
                 self.send(dict(scan_state))
             elif self.path == '/api/redmine-customers':

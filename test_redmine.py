@@ -98,6 +98,49 @@ class SyncTests(unittest.TestCase):
         with patch.object(redmine, 'request', return_value=detail), patch.object(redmine, 'issues', return_value=iter([valid, other])):
             self.assertEqual(redmine.find_issue_customers(1), [{'id': 123, 'name': 'Provoz A'}])
 
+    def test_helpdesk_write_requires_current_version_and_member(self):
+        issue = {'id': 22, 'project': {'id': 12}, 'updated_on': 'v1', 'assigned_to': {'id': 1}, 'relations': []}
+        with patch.object(redmine, 'request', return_value={'issue': issue}), patch.object(redmine, 'redmine_write') as write:
+            with self.assertRaisesRegex(ValueError, 'změnil'):
+                redmine.apply_helpdesk_change(22, 'assignee', 2, 'old', redmine.helpdesk_state_token(issue))
+            write.assert_not_called()
+        changed = dict(issue, assigned_to={'id': 3})
+        with patch.object(redmine, 'request', return_value={'issue': changed}), patch.object(redmine, 'redmine_write') as write:
+            with self.assertRaisesRegex(ValueError, 'změnil'):
+                redmine.apply_helpdesk_change(22, 'assignee', 2, 'v1', redmine.helpdesk_state_token(issue))
+            write.assert_not_called()
+        with patch.object(redmine, 'request', return_value={'issue': issue}), patch.object(redmine, 'helpdesk_members', return_value=[{'id': 3}]), patch.object(redmine, 'redmine_write') as write:
+            with self.assertRaisesRegex(ValueError, 'členy'):
+                redmine.apply_helpdesk_change(22, 'assignee', 2, 'v1', redmine.helpdesk_state_token(issue))
+            write.assert_not_called()
+        after = dict(issue, assigned_to={'id': 2}, updated_on='v2')
+        with patch.object(redmine, 'request', side_effect=[{'issue': issue}, {'issue': after}]), patch.object(redmine, 'helpdesk_members', return_value=[{'id': 2}]), patch.object(redmine, 'redmine_write') as write:
+            self.assertTrue(redmine.apply_helpdesk_change(22, 'assignee', 2, 'v1', redmine.helpdesk_state_token(issue))['ok'])
+            write.assert_called_once_with('/issues/22.json', 'PUT', {'issue': {'assigned_to_id': 2}})
+
+    def test_customer_link_rejects_duplicates_and_checks_readback(self):
+        issue = {'id': 22, 'project': {'id': 12}, 'updated_on': 'v1', 'relations': []}
+        customer = {'id': 123, 'project': {'id': 1}, 'tracker': {'id': 4}}
+        duplicate = dict(issue, relations=[{'issue_id': 22, 'issue_to_id': 123}])
+        with patch.object(redmine, 'request', side_effect=[{'issue': duplicate}, {'issue': customer}]), patch.object(redmine, 'redmine_write') as write:
+            with self.assertRaisesRegex(ValueError, 'již propojen'):
+                redmine.apply_helpdesk_change(22, 'customer', 123, 'v1', redmine.helpdesk_state_token(duplicate))
+            write.assert_not_called()
+        with patch.object(redmine, 'request', side_effect=[{'issue': issue}, {'issue': customer}, {'issue': duplicate}]), patch.object(redmine, 'redmine_write') as write:
+            self.assertTrue(redmine.apply_helpdesk_change(22, 'customer', 123, 'v1', redmine.helpdesk_state_token(issue))['ok'])
+            write.assert_called_once_with('/issues/22/relations.json', 'POST', {'relation': {'issue_to_id': 123, 'relation_type': 'relates'}})
+
+    def test_customer_match_is_local_and_explained(self):
+        from suggestions import customer_suggestions
+        candidates = [{'id': 4, 'name': 'ZŠ Nové Město'}, {'id': 5, 'name': 'Město'}]
+        result = customer_suggestions('Potíže ZŠ Nové Město', '', candidates)
+        self.assertEqual([c['id'] for c in result], [4, 5])
+        self.assertEqual(customer_suggestions('Něco jiného', '', candidates), [])
+        partial = customer_suggestions('Oprava v Trebechovicich', '', [{'id': 9, 'name': 'Třebechovice škola', 'address': ''}])
+        self.assertEqual(partial, [])
+        partial = customer_suggestions('Oprava Třebechovice', '', [{'id': 9, 'name': 'Třebechovice škola', 'address': ''}])
+        self.assertIn('zkontrolujte', partial[0]['reason'])
+
     def test_pagination(self):
         responses = [{'issues':[{'id':1}], 'total_count':2}, {'issues':[{'id':2}], 'total_count':2}]
         with patch.object(redmine, 'request', side_effect=responses):
