@@ -79,6 +79,25 @@ class SyncTests(unittest.TestCase):
         self.assertFalse(redmine.customer_scan_due(now=4899))
         self.assertTrue(redmine.customer_scan_due(now=4900))
 
+    def test_snapshot_shows_only_explicit_customer_links(self):
+        path = os.path.join(self.tmp.name, 'customers.json')
+        with open(path, 'w', encoding='utf-8') as f:
+            json.dump([{'issue_id': 123, 'name': 'Provoz A', 'address': ''}], f)
+        with patch.object(redmine, 'CUSTOMERS', redmine.Path(path)):
+            self.run_sync([self.item])
+            self.assertEqual(redmine.snapshot()['issues'][0]['customers'], [])
+            payload = {'issues': [{'id': 1}], 'state': 'open'}
+            with redmine.connect() as db:
+                db.execute('INSERT INTO customer_issue_status VALUES (?, ?, ?)', (123, json.dumps(payload), '2026-01-01'))
+            self.assertEqual(redmine.snapshot()['issues'][0]['customers'], [{'id': 123, 'name': 'Provoz A'}])
+
+    def test_customer_lookup_checks_project_and_tracker(self):
+        detail = {'issue': {'id': 1, 'parent': {'id': 123}, 'relations': [{'issue_id': 1, 'issue_to_id': 456}]}}
+        valid = {'id': 123, 'subject': 'Provoz A', 'project': {'id': 1}, 'tracker': {'id': 4}}
+        other = {'id': 456, 'subject': 'Jiný úkol', 'project': {'id': 1}, 'tracker': {'id': 3}}
+        with patch.object(redmine, 'request', return_value=detail), patch.object(redmine, 'issues', return_value=iter([valid, other])):
+            self.assertEqual(redmine.find_issue_customers(1), [{'id': 123, 'name': 'Provoz A'}])
+
     def test_pagination(self):
         responses = [{'issues':[{'id':1}], 'total_count':2}, {'issues':[{'id':2}], 'total_count':2}]
         with patch.object(redmine, 'request', side_effect=responses):

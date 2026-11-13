@@ -50,6 +50,7 @@ def connect():
     db.execute('CREATE TABLE IF NOT EXISTS issues (id INTEGER PRIMARY KEY, payload TEXT NOT NULL, updated TEXT NOT NULL, first_seen TEXT NOT NULL)')
     db.execute('CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT NOT NULL)')
     db.execute('CREATE TABLE IF NOT EXISTS events (id INTEGER PRIMARY KEY, issue_id INTEGER NOT NULL, kind TEXT NOT NULL, seen_at TEXT NOT NULL)')
+    db.execute('CREATE TABLE IF NOT EXISTS issue_customer_links (issue_id INTEGER PRIMARY KEY, updated TEXT NOT NULL, payload TEXT NOT NULL)')
     db.execute('CREATE TABLE IF NOT EXISTS customer_issue_status (issue_id INTEGER PRIMARY KEY, payload TEXT NOT NULL, checked_at TEXT NOT NULL)')
     db.execute('CREATE TABLE IF NOT EXISTS added_customers (issue_id INTEGER PRIMARY KEY, name TEXT NOT NULL, address TEXT NOT NULL)')
     db.execute('CREATE TABLE IF NOT EXISTS customer_locations (issue_id INTEGER PRIMARY KEY, lat REAL NOT NULL, lon REAL NOT NULL)')
@@ -59,6 +60,21 @@ def connect():
     finally:
         db.close()
 
+def find_issue_customers(issue_id):
+    detail = request(f'/issues/{issue_id}.json', {'include': 'relations'})['issue']
+    ids = {detail.get('parent', {}).get('id')}
+    for rel in detail.get('relations', []):
+        ids.add(rel.get('issue_to_id') if rel.get('issue_id') == issue_id else rel.get('issue_id'))
+    ids.discard(None); ids.discard(issue_id)
+    found = []
+    ordered = sorted(ids)
+    for n in range(0, len(ordered), 100):
+        for item in issues({'issue_id': ','.join(map(str, ordered[n:n+100])), 'project_id': 'zakaznici', 'tracker_id': 4, 'status_id': '*'}):
+            if item['id'] in ids and item.get('project', {}).get('id') == 1 and item.get('tracker', {}).get('id') == 4:
+                found.append({'id': item['id'], 'name': item.get('subject', '')})
+    return found
+
+
 def sync():
     if not KEY:
         raise ValueError('Chybí REDMINE_API_KEY.')
@@ -67,12 +83,27 @@ def sync():
     for params in ({'assigned_to_id': 'me', 'status_id': 'open'}, {'project_id': 'helpdesk', 'status_id': 'open'}):
         for issue in issues(params):
             collected[issue['id']] = issue
+    with connect() as db:
+        previous_links = dict(db.execute('SELECT issue_id, updated FROM issue_customer_links'))
+    link_updates = {}
+    for issue in collected.values():
+        if previous_links.get(issue['id']) != issue['updated_on']:
+            try:
+                link_updates[issue['id']] = find_issue_customers(issue['id'])
+            except Exception:
+                link_updates[issue['id']] = None
     now = datetime.now(timezone.utc).isoformat()
     with connect() as db:
         initial = db.execute("SELECT value FROM meta WHERE key='last_sync'").fetchone() is None
         previous = {row[0]: row[1] for row in db.execute('SELECT id, updated FROM issues')}
         for issue in collected.values():
             iid = issue['id']
+            if iid in link_updates:
+                links = link_updates[iid]
+                if links is None:
+                    db.execute('DELETE FROM issue_customer_links WHERE issue_id=?', (iid,))
+                else:
+                    db.execute('INSERT INTO issue_customer_links VALUES (?, ?, ?) ON CONFLICT(issue_id) DO UPDATE SET updated=excluded.updated, payload=excluded.payload', (iid, issue['updated_on'], json.dumps(links, ensure_ascii=False)))
             if not initial and (iid not in previous or previous[iid] != issue['updated_on']):
                 db.execute('INSERT INTO events(issue_id,kind,seen_at) VALUES (?,?,?)', (iid, 'new' if iid not in previous else 'updated', now))
             db.execute('INSERT INTO issues VALUES (?, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET payload=excluded.payload, updated=excluded.updated', (iid, json.dumps(issue, ensure_ascii=False), issue['updated_on'], now))
@@ -87,8 +118,15 @@ def snapshot():
     with connect() as db:
         meta = dict(db.execute('SELECT key,value FROM meta'))
         data = [json.loads(row[0]) for row in db.execute('SELECT payload FROM issues ORDER BY updated DESC')]
+        direct_links = {i: json.loads(payload) for i, payload in db.execute('SELECT issue_id, payload FROM issue_customer_links')}
         events = [{'issue_id': i, 'kind': k, 'seen_at': t} for i,k,t in db.execute('SELECT issue_id,kind,seen_at FROM events ORDER BY id DESC LIMIT 100')]
+    customer_links = {}
+    for customer in customers()['customers']:
+        for related in (customer.get('related_status') or {}).get('issues', []):
+            customer_links.setdefault(related['id'], []).append({'id': customer['issue_id'], 'name': customer['name']})
     for issue in data:
+        links = direct_links.get(issue['id'], customer_links.get(issue['id'], []))
+        issue['customers'] = list({c['id']: c for c in links}.values())
         issue['hardware_reasons'] = classify(issue)
         issue['mine'] = str(issue.get('assigned_to', {}).get('id', '')) == meta.get('user_id')
     return {'issues': data, 'events': events, 'last_sync': meta.get('last_sync'), 'error': meta.get('error'), 'configured': bool(KEY), 'ai_configured': bool(MODEL), 'base_url': BASE}
