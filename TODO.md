@@ -22,6 +22,16 @@ Současná verze nabízí výběr zastávek a orientační seřazení podle vzd�
 
 První implementační větev `feature/helpdesk-triage`: lokální konzervativní klasifikace, vysvětlení důvodu, přehled „HW návrhy“ a jednotkové testy. **Automatické zápisy do Redmine zatím vypnuté.** Detail zadání: https://github.com/H0nz4k/Redmine_sw/issues/1
 
+### Denní firemní kronika Redminu — issue #3
+
+- [ ] Každý den kolem 18:30 Europe/Prague sestavit souvislou zprávu o událostech ve všech dostupných projektech a od všech dostupných autorů.
+- [ ] Vycházet z Redmine API a historie změn: co vzniklo, co kdo dokončil nebo uzavřel a jaké zásadní změny proběhly.
+- [ ] U každé důležité události uvést člověka, projekt a klikací odkaz na původní záznam.
+- [ ] Zprávu automaticky ukládat v aplikaci včetně historie a ručního spuštění, bez duplicit a bez ztrát při výpadku.
+- [ ] Později zvážit upozornění a možnost přečtení zprávy Henkem nahlas.
+
+**Nejde o filtr mých úkolů ani Helpdesku:** cílem je přehled o dění v celé firmě. Podrobné zadání: https://github.com/H0nz4k/Redmine_sw/issues/3
+
 ### Helpdesk a úkoly
 
 - [ ] Zlepšovat návrhy provozovny podle ověřitelných údajů ve zprávě a kontaktech zákazníků; vysvětlovat použité indicie.
