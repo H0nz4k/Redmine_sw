@@ -13,6 +13,15 @@ Tento seznam slouží k zapisování a prioritizaci nápadů pro aplikaci. Nové
 
 Současná verze nabízí výběr zastávek a orientační seřazení podle vzdálenosti vzdušnou čarou; adresa odjezdu je poznámka, bod se vybírá na mapě. Plán se ukládá v konkrétním prohlížeči.
 
+### Automatické třídění Helpdesku (issue #1)
+
+- [ ] Přiřazovat jednoznačné nepřiřazené HW závady bezpečným workerem (nejprve dry-run, pak explicitní aktivace).
+- [ ] Ukládat trvalé návrhy, schválení/odmítnutí, přečteno/nepřečteno a audit.
+- [ ] Přidat upozornění na nové relevantní úkoly, rychlý detail a potvrzení přímo v aplikaci.
+- [ ] Ověřit pravidla na skutečných tiketech před zapnutím automatického zápisu.
+
+První implementační větev `feature/helpdesk-triage`: lokální konzervativní klasifikace, vysvětlení důvodu, přehled „HW návrhy“ a jednotkové testy. **Automatické zápisy do Redmine zatím vypnuté.** Detail zadání: https://github.com/H0nz4k/Redmine_sw/issues/1
+
 ### Helpdesk a úkoly
 
 - [ ] Zlepšovat návrhy provozovny podle ověřitelných údajů ve zprávě a kontaktech zákazníků; vysvětlovat použité indicie.

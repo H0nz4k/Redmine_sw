@@ -2,6 +2,7 @@ import json
 import hashlib
 import re
 from contextlib import contextmanager
+from functools import lru_cache
 import os
 import sqlite3
 import socketserver
@@ -14,6 +15,7 @@ from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from suggestions import customer_suggestions
+from triage import analyze_issue
 
 BASE = os.environ.get('REDMINE_URL', 'https://redmine.altisima.cz').rstrip('/')
 KEY = os.environ.get('REDMINE_API_KEY', '')
@@ -25,6 +27,19 @@ MAP_KEY = os.environ.get('MAPY_API_KEY', '')
 CUSTOMERS = Path(os.environ.get('CUSTOMERS_FILE', 'data/customers.json'))
 UNIX_SOCKET = os.environ.get('REDMINE_UNIX_SOCKET', '')
 ALLOWED_ORIGINS = {value.strip() for value in os.environ.get('REDMINE_ALLOWED_ORIGINS', '').split(',') if value.strip()}
+
+@lru_cache(maxsize=1)
+def app_version():
+    """Identify the actual running code, including deployments without a .git directory."""
+    root = Path(__file__).resolve().parent
+    name = (root / 'VERSION').read_text(encoding='utf-8').strip() if (root / 'VERSION').exists() else 'unversioned'
+    fingerprint = hashlib.sha256()
+    for filename in ('VERSION', 'redmine.py', 'index.html', 'triage.py'):
+        path = root / filename
+        if path.exists():
+            fingerprint.update(filename.encode('utf-8') + b'\0' + path.read_bytes())
+    return {'number': name, 'build': fingerprint.hexdigest()[:10]}
+
 WORDS = ('terminál', 'terminal', 'snímač', 'snímac', 'čtečk', 'cteck', 'tiskárn', 'tiskarn', 'klávesnic', 'klavesnic', 'reproduktor', 'hardware', 'počítač', 'pocitac', ' pc ', 'pc box')
 
 def request(path, params=None):
@@ -144,8 +159,9 @@ def snapshot():
         cached = proposals.get(issue['id'])
         issue['customer_suggestions'] = cached[1] if cached and cached[0] == issue.get('updated_on') and not issue['customers'] else []
         issue['hardware_reasons'] = classify(issue)
+        issue['triage'] = analyze_issue(issue)
         issue['mine'] = str(issue.get('assigned_to', {}).get('id', '')) == meta.get('user_id')
-    return {'issues': data, 'events': events, 'last_sync': meta.get('last_sync'), 'error': meta.get('error'), 'configured': bool(KEY), 'ai_configured': bool(MODEL), 'base_url': BASE}
+    return {'issues': data, 'events': events, 'last_sync': meta.get('last_sync'), 'error': meta.get('error'), 'configured': bool(KEY), 'ai_configured': bool(MODEL), 'base_url': BASE, 'version': app_version()}
 
 def customers():
     data = json.loads(CUSTOMERS.read_text(encoding='utf-8')) if CUSTOMERS.exists() else []
@@ -447,6 +463,8 @@ class Handler(BaseHTTPRequestHandler):
                 self.send({'error': 'Mapový podklad není dostupný.'}, status=502)
         elif self.path == '/api/overview':
             self.send(snapshot())
+        elif self.path == '/api/version':
+            self.send(app_version())
         else:
             self.send({'error': 'Nenalezeno'}, status=404)
     def do_POST(self):
