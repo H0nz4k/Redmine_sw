@@ -16,6 +16,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from suggestions import customer_suggestions
 from triage import analyze_issue
+import daily_digest
 
 BASE = os.environ.get('REDMINE_URL', 'https://redmine.altisima.cz').rstrip('/')
 KEY = os.environ.get('REDMINE_API_KEY', '')
@@ -34,7 +35,7 @@ def app_version():
     root = Path(__file__).resolve().parent
     name = (root / 'VERSION').read_text(encoding='utf-8').strip() if (root / 'VERSION').exists() else 'unversioned'
     fingerprint = hashlib.sha256()
-    for filename in ('VERSION', 'redmine.py', 'index.html', 'triage.py'):
+    for filename in ('VERSION', 'redmine.py', 'index.html', 'triage.py', 'daily_digest.py', 'denni-prehled.html'):
         path = root / filename
         if path.exists():
             fingerprint.update(filename.encode('utf-8') + b'\0' + path.read_bytes())
@@ -421,6 +422,20 @@ def customer_scan_worker():
         time.sleep(60)
 
 
+def digest_worker():
+    """Local scheduled generation; missed runs catch up from last successful cutoff."""
+    while True:
+        try:
+            if KEY and daily_digest.due(connect):
+                daily_digest.generate(connect, issues, request, BASE)
+                with connect() as db:
+                    db.execute("INSERT INTO meta(key,value) VALUES('digest_error','') ON CONFLICT(key) DO UPDATE SET value=excluded.value")
+        except Exception as exc:
+            with connect() as db:
+                db.execute("INSERT INTO meta(key,value) VALUES('digest_error',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value", (str(exc)[:300],))
+        time.sleep(60)
+
+
 def worker():
     while True:
         try:
@@ -441,6 +456,8 @@ class Handler(BaseHTTPRequestHandler):
             self.send(Path(__file__).with_name('index.html').read_bytes(), 'text/html; charset=utf-8')
         elif self.path == '/mapa':
             self.send(Path(__file__).with_name('mapa.html').read_bytes(), 'text/html; charset=utf-8')
+        elif self.path == '/denni-prehled':
+            self.send(Path(__file__).with_name('denni-prehled.html').read_bytes(), 'text/html; charset=utf-8')
         elif self.path in ('/vendor/leaflet/leaflet.js', '/vendor/leaflet/leaflet.css'):
             asset = Path(__file__).parent / self.path.lstrip('/')
             self.send(asset.read_bytes(), 'text/javascript; charset=utf-8' if self.path.endswith('.js') else 'text/css; charset=utf-8')
@@ -465,6 +482,21 @@ class Handler(BaseHTTPRequestHandler):
             self.send(snapshot())
         elif self.path == '/api/version':
             self.send(app_version())
+        elif self.path == '/api/digest/settings':
+            value = daily_digest.get_settings(connect)
+            with connect() as db:
+                value['error'] = db.execute("SELECT value FROM meta WHERE key='digest_error'").fetchone()
+            value['error'] = value['error'][0] if value['error'] else ''
+            self.send(value)
+        elif self.path == '/api/digest/history':
+            self.send({'reports': daily_digest.history(connect)})
+        elif self.path.startswith('/api/digest/report?'):
+            params = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)
+            day = params.get('day', [''])[0]
+            try:
+                self.send({'day': day, 'markdown': daily_digest.read_report(connect, day)})
+            except (ValueError, FileNotFoundError) as exc:
+                self.send({'error': str(exc)}, status=404)
         else:
             self.send({'error': 'Nenalezeno'}, status=404)
     def do_POST(self):
@@ -506,6 +538,22 @@ class Handler(BaseHTTPRequestHandler):
                 self.send({'ok': True})
             elif self.path == '/api/sync':
                 self.send({'count': sync()})
+            elif self.path in ('/api/digest/settings', '/api/digest/generate'):
+                # Browser POST is a privileged local action; require the trusted Origin.
+                if self.headers.get('Origin') is None or self.headers.get('Origin') not in allowed:
+                    self.send({'error': 'Nepovolený původ.'}, status=403); return
+                if self.path == '/api/digest/settings':
+                    if self.headers.get_content_type() != 'application/json':
+                        raise ValueError('Očekáván JSON.')
+                    length = int(self.headers.get('Content-Length', '0'))
+                    if not 0 < length <= 256:
+                        raise ValueError('Neplatná délka nastavení.')
+                    body = json.loads(self.rfile.read(length))
+                    self.send(daily_digest.set_time(connect, body.get('time')))
+                else:
+                    if not KEY:
+                        raise ValueError('Chybí REDMINE_API_KEY.')
+                    self.send(daily_digest.generate(connect, issues, request, BASE))
             elif self.path.startswith('/api/summary/'):
                 iid = int(self.path.rsplit('/', 1)[1])
                 issue = next((i for i in snapshot()['issues'] if i['id'] == iid), None)
@@ -527,6 +575,7 @@ if hasattr(socketserver, 'UnixStreamServer'):
 if __name__ == '__main__':
     threading.Thread(target=worker, daemon=True).start()
     threading.Thread(target=customer_scan_worker, daemon=True).start()
+    threading.Thread(target=digest_worker, daemon=True).start()
     port = int(os.environ.get('PORT', '4091'))
     if UNIX_SOCKET:
         socket_path = Path(UNIX_SOCKET)
