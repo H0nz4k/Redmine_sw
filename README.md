@@ -1,5 +1,7 @@
 # Redmine přehled
 
+Nápady a plánované funkce jsou v [TODO seznamu](TODO.md).
+
 Lokální webový přehled otevřených úkolů přihlášeného uživatele a projektu `helpdesk`. Synchronizace pravidelně načítá Redmine REST API; první načtení vytvoří výchozí stav, další zachytí nové a změněné otevřené položky. Orientační označení hardwaru používá slova v předmětu a popisu a není zárukou správnosti.
 
 ## Spuštění
