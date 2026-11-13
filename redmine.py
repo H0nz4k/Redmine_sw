@@ -14,6 +14,7 @@ from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from suggestions import customer_suggestions
+from triage import analyze_issue
 
 BASE = os.environ.get('REDMINE_URL', 'https://redmine.altisima.cz').rstrip('/')
 KEY = os.environ.get('REDMINE_API_KEY', '')
@@ -144,6 +145,7 @@ def snapshot():
         cached = proposals.get(issue['id'])
         issue['customer_suggestions'] = cached[1] if cached and cached[0] == issue.get('updated_on') and not issue['customers'] else []
         issue['hardware_reasons'] = classify(issue)
+        issue['triage'] = analyze_issue(issue)
         issue['mine'] = str(issue.get('assigned_to', {}).get('id', '')) == meta.get('user_id')
     return {'issues': data, 'events': events, 'last_sync': meta.get('last_sync'), 'error': meta.get('error'), 'configured': bool(KEY), 'ai_configured': bool(MODEL), 'base_url': BASE}
 
