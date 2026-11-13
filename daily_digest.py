@@ -122,15 +122,15 @@ def _stories(events, contexts):
         else:
             opening = "V projektu " + project + " se řešil požadavek " + link + "."
         sentences = [opening]
-        description = _digest_excerpt(context.get("description"))
+        description = _digest_excerpt(context.get("description"), 180)
         if description:
             sentences.append("Zadání uvádí: " + description + ".")
         notes = context.get("notes", [])
-        for note in notes[-3:]:
-            excerpt = _digest_excerpt(note.get("text"), 260)
+        for note in notes[-2:]:
+            excerpt = _digest_excerpt(note.get("text"), 140)
             if excerpt:
                 sentences.append("V komentáři " + note["author"] + " uvedl(a): " + excerpt + ".")
-        if len(notes) > 3:
+        if len(notes) > 2:
             sentences.append("Další komentáře jsou v původním úkolu.")
         if any(e["kind"] == "done" for e in changes):
             sentences.append("V historii tohoto období je také zaznamenána změna na vyřešený nebo uzavřený stav.")
