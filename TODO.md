@@ -27,6 +27,7 @@ První implementační větev `feature/helpdesk-triage`: lokální konzervativn�
 - [ ] Každý den ve výchozím čase 17:30 Europe/Prague (nastavitelném přímo v aplikaci) sestavit souvislou zprávu o událostech ve všech dostupných projektech a od všech dostupných autorů.
 - [ ] V nastavení aplikace umožnit změnit čas reportu (HH:MM), trvale uložit volbu a ukazovat další plánované spuštění; změna nesmí způsobit duplicity nebo ztrátu dat.
 - [ ] Vycházet z Redmine API a historie změn: co vzniklo, co kdo dokončil nebo uzavřel a jaké zásadní změny proběhly.
+- [ ] Nad soupisem zobrazovat slovní kroniku z popisů bugů a komentářů, s uvedením autorů a odkazy. První implementace ve větvi feature/digest-narrative, produkčně ověřit.
 - [ ] U každé důležité události uvést člověka, projekt a klikací odkaz na původní záznam.
 - [ ] Zprávu automaticky ukládat v aplikaci včetně historie a ručního spuštění, bez duplicit a bez ztrát při výpadku.
 - [ ] Později zvážit upozornění a možnost přečtení zprávy Henkem nahlas.

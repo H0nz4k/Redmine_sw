@@ -89,11 +89,64 @@ def _event(key, kind, issue, who, when, base, message):
             "message": message, "url": base.rstrip("/") + "/issues/" + str(int(issue["id"]))}
 
 
+def _digest_excerpt(value, limit=340):
+    """Conservative extractive summary: never claim actions absent from Redmine."""
+    value = re.sub(r"\s+", " ", str(value or "")).strip()
+    value = re.sub(r"[<>\[\]`*_#|~]", " ", value)
+    value = re.sub(r"\s+", " ", value).strip()
+    if len(value) <= limit:
+        return value
+    cut = value[:limit].rsplit(" ", 1)[0]
+    return (cut or value[:limit]).rstrip(" ,.;:") + "…"
+
+
+def _stories(events, contexts):
+    """One readable paragraph per changed issue; keep source links and detailed list."""
+    groups = {}
+    for event in events:
+        if "/issues/" not in event["url"]:
+            continue
+        issue_id = int(event["url"].rsplit("/", 1)[1])
+        groups.setdefault(issue_id, []).append(event)
+    paragraphs = []
+    for issue_id, changes in groups.items():
+        context = contexts.get(issue_id, {})
+        first = changes[0]
+        project, subject = first["project"], first["subject"]
+        link = "[#" + str(issue_id) + " – " + subject.replace("(", " ").replace(")", " ") + "](" + first["url"] + ")"
+        author = context.get("author", "")
+        if any(e["kind"] == "new" for e in changes):
+            opening = ("V projektu " + project + " přibyl požadavek " + link +
+                       (", který zadal(a) " + author if author else "") + ".")
+        else:
+            opening = "V projektu " + project + " se řešil požadavek " + link + "."
+        sentences = [opening]
+        description = _digest_excerpt(context.get("description"))
+        if description:
+            sentences.append("Zadání uvádí: " + description + ".")
+        notes = context.get("notes", [])
+        for note in notes[-3:]:
+            excerpt = _digest_excerpt(note.get("text"), 260)
+            if excerpt:
+                sentences.append("V komentáři " + note["author"] + " uvedl(a): " + excerpt + ".")
+        if len(notes) > 3:
+            sentences.append("Další komentáře jsou v původním úkolu.")
+        if any(e["kind"] == "done" for e in changes):
+            sentences.append("V historii tohoto období je také zaznamenána změna na vyřešený nebo uzavřený stav.")
+        elif any(e["kind"] == "change" for e in changes) and not notes:
+            sentences.append("Během dne došlo k aktualizaci úkolu; podrobnosti jsou v odkazu.")
+        if not description and not notes:
+            sentences.append("Podrobnější popis ani komentáře pro toto období nejsou dostupné.")
+        paragraphs.append(" ".join(sentences))
+    return paragraphs
+
+
 def _collect(start, end, issues, request, base, previous_projects):
     found = {}
     for item in issues({"status_id": "*", "updated_on": ">=" + _stamp(start)}):
         found[int(item["id"])] = item
     events = {}
+    contexts = {}
     for item in found.values():
         created = item.get("created_on")
         if created and start <= _utc(created) <= end:
@@ -103,6 +156,11 @@ def _collect(start, end, issues, request, base, previous_projects):
         detail = request("/issues/" + str(int(item["id"])) + ".json", {"include": "journals"})["issue"]
         if "journals" not in detail:
             raise RuntimeError("Redmine nevrátil historii změn úkolu #" + str(item["id"]))
+        contexts[int(item["id"])] = {
+            "author": _clean(detail.get("author", item.get("author", {})).get("name")),
+            "description": detail.get("description") or item.get("description") or "",
+            "notes": [],
+        }
         for journal in detail["journals"]:
             changed = journal.get("created_on")
             if not changed or not (start <= _utc(changed) <= end):
@@ -112,6 +170,12 @@ def _collect(start, end, issues, request, base, previous_projects):
             significant = [d for d in details if d.get("name") in
                            ("status_id", "assigned_to_id", "priority_id", "due_date", "start_date", "subject", "description")]
             notes = (journal.get("notes") or "").strip()
+            if notes:
+                contexts[int(item["id"])]["notes"].append({
+                    "author": _clean(journal.get("user", {}).get("name")) or "Neznámý autor",
+                    "time": _stamp(changed),
+                    "text": notes,
+                })
             if not significant and not notes:
                 continue
             done = any(str(d.get("new_value")) == str(item.get("status", {}).get("id"))
@@ -137,10 +201,10 @@ def _collect(start, end, issues, request, base, previous_projects):
                 events[key] = {"key": key, "kind": "project", "who": "Redmine", "project": _clean(name),
                                "time": _stamp(end), "subject": _clean(name), "message": "objevil se nový projekt",
                                "url": base.rstrip("/") + "/projects/" + str(project_id)}
-    return sorted(events.values(), key=lambda e: (e["time"], e["key"])), current_projects
+    return sorted(events.values(), key=lambda e: (e["time"], e["key"])), current_projects, contexts
 
 
-def _markdown(events, start, end):
+def _markdown(events, start, end, contexts=None):
     local_start = start.astimezone(TZ).strftime("%d.%m.%Y %H:%M")
     local_end = end.astimezone(TZ).strftime("%d.%m.%Y %H:%M")
     groups = {"project": [], "new": [], "done": [], "change": []}
@@ -156,6 +220,11 @@ def _markdown(events, start, end):
         parts.append("Přibylo " + str(count("project")) + " projektů a " + str(count("new")) +
                      " úkolů; dokončeno nebo uzavřeno " + str(count("done")) +
                      " úkolů; dalších důležitých změn " + str(count("change")) + ".")
+    stories = _stories(events, contexts or {})
+    if stories:
+        parts.extend(["", "## Co se skutečně řešilo", ""])
+        for story in stories:
+            parts.extend([story, ""])
     headings = (("project", "Nové projekty"), ("new", "Co přibylo"),
                 ("done", "Co se dokončilo"), ("change", "Důležité změny"))
     for category, heading in headings:
@@ -190,8 +259,8 @@ def generate(connect, issues, request, base, now=None):
             start = datetime.combine(end.astimezone(TZ).date(), time(0, 0), tzinfo=TZ).astimezone(timezone.utc)
         if start > end:
             raise RuntimeError("Čas uzávěrky je před začátkem intervalu.")
-        events, current_projects = _collect(start, end, issues, request, base, projects)
-        markdown = _markdown(events, start, end)
+        events, current_projects, contexts = _collect(start, end, issues, request, base, projects)
+        markdown = _markdown(events, start, end, contexts)
         REPORT_DIR.mkdir(mode=0o700, parents=True, exist_ok=True)
         path = REPORT_DIR / (day + ".md")
         temp = REPORT_DIR / (day + ".tmp")
