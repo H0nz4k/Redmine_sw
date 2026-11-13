@@ -1,4 +1,5 @@
 import json
+import re
 from contextlib import contextmanager
 import os
 import sqlite3
@@ -15,6 +16,8 @@ KEY = os.environ.get('REDMINE_API_KEY', '')
 DB = os.environ.get('REDMINE_DB', 'redmine.sqlite3')
 INTERVAL = int(os.environ.get('SYNC_SECONDS', '300'))
 MODEL = os.environ.get('OLLAMA_MODEL', '')
+MAP_KEY = os.environ.get('MAPY_API_KEY', '')
+CUSTOMERS = Path(os.environ.get('CUSTOMERS_FILE', 'data/customers.json'))
 WORDS = ('terminál', 'terminal', 'snímač', 'snímac', 'čtečk', 'cteck', 'tiskárn', 'tiskarn', 'klávesnic', 'klavesnic', 'reproduktor', 'hardware', 'počítač', 'pocitac', ' pc ', 'pc box')
 
 def request(path, params=None):
@@ -43,6 +46,7 @@ def connect():
     db.execute('CREATE TABLE IF NOT EXISTS issues (id INTEGER PRIMARY KEY, payload TEXT NOT NULL, updated TEXT NOT NULL, first_seen TEXT NOT NULL)')
     db.execute('CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT NOT NULL)')
     db.execute('CREATE TABLE IF NOT EXISTS events (id INTEGER PRIMARY KEY, issue_id INTEGER NOT NULL, kind TEXT NOT NULL, seen_at TEXT NOT NULL)')
+    db.execute('CREATE TABLE IF NOT EXISTS customer_locations (issue_id INTEGER PRIMARY KEY, lat REAL NOT NULL, lon REAL NOT NULL)')
     try:
         with db:
             yield db
@@ -83,6 +87,47 @@ def snapshot():
         issue['mine'] = str(issue.get('assigned_to', {}).get('id', '')) == meta.get('user_id')
     return {'issues': data, 'events': events, 'last_sync': meta.get('last_sync'), 'error': meta.get('error'), 'configured': bool(KEY), 'ai_configured': bool(MODEL), 'base_url': BASE}
 
+def customers():
+    data = json.loads(CUSTOMERS.read_text(encoding='utf-8')) if CUSTOMERS.exists() else []
+    with connect() as db:
+        locations = {i: (lat, lon) for i, lat, lon in db.execute('SELECT issue_id, lat, lon FROM customer_locations')}
+        issue_ids = {i for (i,) in db.execute('SELECT id FROM issues')}
+    for customer in data:
+        manual = locations.get(customer['issue_id'])
+        customer['location'] = manual or customer.get('candidate_location')
+        customer['location_source'] = 'Ručně potvrzeno' if manual else customer.get('candidate_source', '')
+        customer['in_open_issues'] = customer['issue_id'] in issue_ids
+    return {'customers': data, 'map_configured': bool(MAP_KEY), 'base_url': BASE}
+
+def related_issues(customer_id):
+    if customer_id not in {c['issue_id'] for c in customers()['customers']}:
+        raise ValueError('Zákazník nebyl nalezen.')
+    if not KEY:
+        raise ValueError('Chybí REDMINE_API_KEY.')
+    found = []
+    for item in snapshot()['issues']:
+        if item['id'] == customer_id:
+            continue
+        detail = request(f"/issues/{item['id']}.json", {'include': 'relations'})['issue']
+        ids = {detail.get('parent', {}).get('id')}
+        for relation in detail.get('relations', []):
+            ids.update((relation.get('issue_id'), relation.get('issue_to_id')))
+        if customer_id in ids:
+            found.append({'id': item['id'], 'subject': item.get('subject', ''), 'status': item.get('status', {}).get('name', '')})
+    return found
+
+
+def save_location(iid, lat, lon):
+    import math
+    if iid not in {c['issue_id'] for c in customers()['customers']}:
+        raise ValueError('Zákazník nebyl nalezen.')
+    lat, lon = float(lat), float(lon)
+    if not (math.isfinite(lat) and math.isfinite(lon) and -90 <= lat <= 90 and -180 <= lon <= 180):
+        raise ValueError('Neplatné souřadnice.')
+    with connect() as db:
+        db.execute('INSERT INTO customer_locations VALUES (?, ?, ?) ON CONFLICT(issue_id) DO UPDATE SET lat=excluded.lat, lon=excluded.lon', (iid, lat, lon))
+
+
 def summary(issue):
     if not MODEL:
         raise ValueError('Lokální model není nastavený (OLLAMA_MODEL).')
@@ -110,6 +155,26 @@ class Handler(BaseHTTPRequestHandler):
     def do_GET(self):
         if self.path == '/':
             self.send(Path(__file__).with_name('index.html').read_bytes(), 'text/html; charset=utf-8')
+        elif self.path == '/mapa':
+            self.send(Path(__file__).with_name('mapa.html').read_bytes(), 'text/html; charset=utf-8')
+        elif self.path in ('/vendor/leaflet/leaflet.js', '/vendor/leaflet/leaflet.css'):
+            asset = Path(__file__).parent / self.path.lstrip('/')
+            self.send(asset.read_bytes(), 'text/javascript; charset=utf-8' if self.path.endswith('.js') else 'text/css; charset=utf-8')
+        elif self.path == '/api/customers':
+            self.send(customers())
+        elif self.path.startswith('/maptiles/'):
+            match = re.fullmatch(r'/maptiles/(\d{1,2})/(\d{1,7})/(\d{1,7})', self.path)
+            if not match or not MAP_KEY:
+                self.send({'error': 'Mapový podklad není nastaven.'}, status=404); return
+            z, x, y = map(int, match.groups())
+            if z > 19 or x >= 2**z or y >= 2**z:
+                self.send({'error': 'Neplatná dlaždice.'}, status=400); return
+            try:
+                url = f'https://api.mapy.com/v1/maptiles/basic/256/{z}/{x}/{y}?' + urllib.parse.urlencode({'apikey': MAP_KEY})
+                with urllib.request.urlopen(url, timeout=15) as response:
+                    self.send(response.read(), response.headers.get('Content-Type', 'image/png'))
+            except Exception:
+                self.send({'error': 'Mapový podklad není dostupný.'}, status=502)
         elif self.path == '/api/overview':
             self.send(snapshot())
         else:
@@ -118,7 +183,17 @@ class Handler(BaseHTTPRequestHandler):
         if self.headers.get('Origin') not in (None, 'http://127.0.0.1:' + str(self.server.server_port), 'http://localhost:' + str(self.server.server_port)):
             self.send({'error':'Nepovolený původ'}, status=403); return
         try:
-            if self.path == '/api/sync':
+            if self.path.startswith('/api/customer-issues/'):
+                iid = int(self.path.rsplit('/', 1)[1])
+                self.send({'issues': related_issues(iid)})
+            elif self.path.startswith('/api/location/'):
+                iid = int(self.path.rsplit('/', 1)[1])
+                length = int(self.headers.get('Content-Length', '0'))
+                if not 0 < length <= 1024: raise ValueError('Neplatný požadavek.')
+                body = json.loads(self.rfile.read(length))
+                save_location(iid, body['lat'], body['lon'])
+                self.send({'ok': True})
+            elif self.path == '/api/sync':
                 self.send({'count': sync()})
             elif self.path.startswith('/api/summary/'):
                 iid = int(self.path.rsplit('/', 1)[1])

@@ -28,6 +28,20 @@ class SyncTests(unittest.TestCase):
         with patch.object(redmine, 'request', side_effect=OSError('offline')):
             with self.assertRaises(OSError): redmine.sync()
         self.assertEqual(len(redmine.snapshot()['issues']), 1)
+    def test_customer_locations_and_relations(self):
+        path = os.path.join(self.tmp.name, 'customers.json')
+        with open(path, 'w', encoding='utf-8') as f:
+            json.dump([{'issue_id': 123, 'name': 'Test', 'address': 'Test', 'poe': ''}], f)
+        with patch.object(redmine, 'CUSTOMERS', redmine.Path(path)):
+            redmine.save_location(123, 50, 15)
+            self.assertEqual(redmine.customers()['customers'][0]['location'], (50, 15))
+            with self.assertRaises(ValueError): redmine.save_location(123, 'NaN', 15)
+            with self.assertRaises(ValueError): redmine.save_location(456, 50, 15)
+            self.run_sync([self.item])
+            detail = {'issue': {'id': 1, 'relations': [{'issue_id': 1, 'issue_to_id': 123}]}}
+            with patch.object(redmine, 'request', return_value=detail):
+                self.assertEqual(redmine.related_issues(123)[0]['id'], 1)
+
     def test_pagination(self):
         responses = [{'issues':[{'id':1}], 'total_count':2}, {'issues':[{'id':2}], 'total_count':2}]
         with patch.object(redmine, 'request', side_effect=responses):
