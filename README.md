@@ -29,3 +29,9 @@ V přehledu úkolů se provozovna zobrazuje pouze podle přímé vazby nebo rodi
 ## Návrhy pro helpdesk
 
 U požadavku v projektu Helpdesk tlačítko **Návrhy přiřazení** načítá detail, zákazníky a členy projektu z Redmine a lokálně porovnává název a popis se jmény a adresami zákazníků. Úplná shoda názvu a jednotlivé méně časté výrazy jsou jen návrhy, vždy určené k ověření. Hardwarová klíčová slova navrhují přihlášeného uživatele, pokud je členem Helpdesku; nejsou důkazem HW závady. Není použit žádný externí model ani odeslání textu vyhledávači. Ruční změna řešitele a propojení zákazníka jsou samostatné akce, každá s potvrzením. Server před zápisem znovu kontroluje stav požadavku, členství a typ cílového zákazníka, duplicity a po zápisu načte výsledek. Kontrola před zápisem není atomický zámek Redmine; při nejasném síťovém výsledku ověřte Redmine před opakováním. Služba se vzdáleným přístupem přebírá oprávnění nakonfigurovaného účtu Redmine; chraňte ji stejně jako tento účet.
+
+## Plán výjezdu
+
+Na mapě lze z detailu zákazníka přidat zastávky do výjezdu. Výchozí adresu lze zapsat jako poznámku a odpovídající výchozí bod určit kliknutím na mapu. Aplikace adresu sama nevyhledává. Pořadí navrhne místní výpočet nejbližší další zastávky podle souřadnic; zobrazené úsečky a kilometry jsou vzdušnou čarou, nikoli silniční navigace, doba jízdy ani záruka optimální cesty. Zastávky bez souřadnic je nutné doplnit, aby se zahrnuly do výpočtu. Plán je uložen v localStorage aktuálního prohlížeče, nikoli synchronizován mezi zařízeními; prohlížeč jej může smazat při vymazání dat webu. Funkce neodesílá adresy službě pro plánování trasy. Mapový podklad používá stávající dlaždice Mapy.com.
+
+Přehled **Dlouho otevřené** zobrazuje synchronizované požadavky starší 72 hodin od založení, kromě stavů názvem označených jako vyřešené či uzavřené. Závisí na datech viditelných účtu a nastavení stavů Redmine; nejde o SLA nebo pracovní čas.
