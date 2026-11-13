@@ -1,0 +1,76 @@
+<!doctype html>
+<html lang="cs"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Redmine · Denní přehled</title>
+<style>
+:root{font-family:system-ui,sans-serif;color-scheme:dark;background:#0d1220;color:#e8edf7}
+*{box-sizing:border-box}body{margin:0}main{max-width:1090px;margin:0 auto;padding:18px}
+header{display:flex;gap:14px;align-items:center;justify-content:space-between;flex-wrap:wrap;margin-bottom:16px}
+h1{font-size:1.25rem;margin:0}h2{font-size:1.05rem;margin:0 0 12px}a{color:#80c7ff}
+.card{background:#171f30;border:1px solid #334059;border-radius:13px;padding:18px;margin-bottom:14px}
+.controls{display:flex;gap:12px;align-items:end;flex-wrap:wrap}
+label{display:grid;gap:5px;color:#c6d3e6}button,input,select{font:inherit;border:1px solid #475672;border-radius:8px;padding:9px 11px}
+input,select{background:#0e1626;color:#fff}button{background:#2851a5;color:white;cursor:pointer}button.secondary{background:#263348}button:disabled{opacity:.6;cursor:wait}
+aside{color:#b4c3da;font-size:.87rem;margin-top:9px}#message{min-height:1.4em}
+.layout{display:grid;grid-template-columns:215px minmax(0,1fr);gap:14px}
+#history{display:flex;flex-direction:column;gap:6px}#history button{text-align:left;background:#24334a}
+#history button[aria-current=true]{background:#2851a5}#report{line-height:1.65;overflow-wrap:anywhere}
+#report h2{margin-top:22px;padding-bottom:5px;border-bottom:1px solid #344258}
+#report ul{padding-left:23px}#report li{margin-bottom:9px}
+@media(max-width:700px){.layout{grid-template-columns:1fr}#history{flex-direction:row;overflow-x:auto}}
+</style></head><body>
+<main><header><h1>Denní přehled firmy</h1><a id="back" href=".">Zpět na úkoly</a></header>
+<section class="card"><h2>Nastavení denního souhrnu</h2>
+<div class="controls"><label>Čas generování (Praha)<input id="digest-time" type="time" value="17:30"></label>
+<button id="save">Uložit čas</button><button id="generate" class="secondary">Vygenerovat teď</button></div>
+<aside id="next">Načítám plán…</aside><p id="message" role="status"></p></section>
+<section class="layout"><section class="card"><h2>Historie reportů</h2><div id="history">Načítám…</div></section>
+<article class="card" id="report"><h2>Vyber den z historie</h2></article></section>
+</main><script>
+const prefix=location.pathname.startsWith('/redmine/')?'/redmine':'';
+document.querySelector('#back').href=prefix?prefix+'/':'.';
+const api=(p,o)=>fetch(prefix+p,o);
+const $=s=>document.querySelector(s);
+const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const announce=s=>$('#message').textContent=s;
+function renderMd(md){
+ const lines=md.split(/\r?\n/);let inside=false;const rendered=[];
+ const links=line=>esc(line).replace(/\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g,(_,label,url)=>'<a target="_blank" rel="noopener noreferrer" href="'+url+'">'+label+'</a>');
+ for(const line of lines){
+  if(line.startsWith('- ')){if(!inside){rendered.push('<ul>');inside=true}rendered.push('<li>'+links(line.slice(2))+'</li>');continue}
+  if(inside){rendered.push('</ul>');inside=false}
+  if(line.startsWith('# '))rendered.push('<h2>'+links(line.slice(2))+'</h2>');
+  else if(line.startsWith('## '))rendered.push('<h2>'+links(line.slice(3))+'</h2>');
+  else if(line.trim())rendered.push('<p>'+links(line)+'</p>');
+ }
+ if(inside)rendered.push('</ul>');
+ $('#report').innerHTML=rendered.join('');
+}
+async function loadSettings(){
+ const r=await api('/api/digest/settings');if(!r.ok)throw Error('Nastavení není dostupné');
+ const d=await r.json();$('#digest-time').value=d.time;
+ $('#next').textContent='Další plánovaný souhrn: '+new Date(d.next_run).toLocaleString('cs-CZ',{dateStyle:'medium',timeStyle:'short'})+' (Europe/Prague)';
+ if(d.error)announce('Poslední chyba generování: '+d.error);
+}
+async function openDay(day){
+ const r=await api('/api/digest/report?day='+encodeURIComponent(day));
+ const d=await r.json();if(!r.ok)throw Error(d.error||'Report nelze načíst');
+ renderMd(d.markdown);
+ document.querySelectorAll('[data-day]').forEach(b=>b.setAttribute('aria-current',String(b.dataset.day===day)));
+}
+async function loadHistory(selected){
+ const r=await api('/api/digest/history');if(!r.ok)throw Error('Historie není dostupná');
+ const {reports}=await r.json();const list=$('#history');list.replaceChildren();
+ if(!reports.length){list.textContent='Zatím žádné reporty.';return}
+ for(const row of reports){const button=document.createElement('button');button.dataset.day=row.day;button.textContent=row.day+' · '+row.events+' událostí';button.onclick=()=>openDay(row.day).catch(e=>announce(e.message));list.append(button)}
+ await openDay(selected||reports[0].day);
+}
+$('#save').onclick=async()=>{const b=$('#save');b.disabled=true;try{
+ const r=await api('/api/digest/settings',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({time:$('#digest-time').value})});
+ const d=await r.json();if(!r.ok)throw Error(d.error);await loadSettings();announce('Čas reportu byl uložen.')
+}catch(e){announce('Uložení selhalo: '+e.message)}finally{b.disabled=false}};
+$('#generate').onclick=async()=>{const b=$('#generate');b.disabled=true;announce('Načítám změny napříč projekty…');try{
+ const r=await api('/api/digest/generate',{method:'POST'});const d=await r.json();if(!r.ok)throw Error(d.error);
+ await loadHistory(d.day);await loadSettings();announce('Report '+d.day+' uložen ('+d.event_count+' událostí).')
+}catch(e){announce('Generování selhalo: '+e.message)}finally{b.disabled=false}};
+Promise.all([loadSettings(),loadHistory()]).catch(e=>announce(e.message));
+</script></body></html>

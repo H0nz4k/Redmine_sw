@@ -1,13 +1,14 @@
 """Version and deployment fingerprint contract."""
 import re
 import unittest
+from pathlib import Path
 import redmine
 
 
 class AppVersionTests(unittest.TestCase):
     def test_number_and_build_id_are_available(self):
         info = redmine.app_version()
-        self.assertEqual(info['number'], '0.1.0-dev.1')
+        self.assertEqual(info['number'], (Path(redmine.__file__).resolve().parent / 'VERSION').read_text(encoding='utf-8').strip())
         self.assertRegex(info['build'], r'^[0-9a-f]{10}$')
 
     def test_version_in_overview(self):
