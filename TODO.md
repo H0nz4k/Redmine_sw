@@ -5,9 +5,9 @@ Tento seznam slouží k zapisování a prioritizaci nápadů pro aplikaci. Nové
 ## Skutečný stav a návaznost — 14. 11. 2026
 
 - HanzHub: běží přehled s nastavením vzhledu, stručným přehledem v dialogu, mapou a základním denním přehledem. Vzhled a dialog byly ověřeny v prohlížeči se synchronizovanými daty.
-- Tato větev sjednocuje jejich vzhled se zdrojovým kódem GitHub `main` na `7e692f2`. Ten obsahuje novější denní kroniku, obnovu zmeškaných reportů a připravené privátní podklady pro Henka; **tyto novější funkce nejsou tímto tvrzením potvrzeny jako nasazené na HanzHubu**. Než se bude cokoliv nasazovat, porovnat stav a chránit existující reporty a databázi.
+- Novější denní kronika `0.1.0-dev.5` byla nasazena 14. 11. 2026. Služba, plán 17:30, zobrazení existujícího reportu a nedostupnost privátní cesty byly ověřeny; původní report zůstal nezměněn a záloha SQLite i reportů byla vytvořena. Skutečné generování přes Redmine API ani dnešní plánovaná uzávěrka zatím ověřené nejsou. Při dalším nasazení chránit reporty a databázi.
 - Místní AI shrnutí zůstává experiment: síťově izolovaný model byl vyzkoušen pouze na syntetických datech, prokazatelně chyboval v prvním pokusu a jeho použití pro skutečné požadavky není schváleno.
-- Popisek filtru a stručného přehledu „Přiřazeno“ byl nasazen na HanzHubu 14. 11. 2026; soubor HTML byl ověřen přes dashboard. Identifikátor sestavení se kvůli cachování aktualizuje při dalším restartu služby.
+- Popisek filtru a stručného přehledu „Přiřazeno“ byl nasazen na HanzHubu 14. 11. 2026 a ověřen v prohlížeči. Po restartu nové kroniky se identifikátor sestavení znovu vypočetl.
 
 ## Rozpracované a navazující úkoly
 
