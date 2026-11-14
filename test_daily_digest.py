@@ -57,6 +57,16 @@ class DigestTests(unittest.TestCase):
         return digest.generate(self.connect, self.issues, self.request,
                                "https://redmine.example.test", datetime.fromisoformat(now))
 
+    def test_issue_filter_floors_fractional_start_without_losing_boundary(self):
+        from datetime import datetime, timezone
+        from unittest.mock import Mock
+        start = datetime(2026, 11, 13, 20, 52, 29, 123456, tzinfo=timezone.utc)
+        end = datetime(2026, 11, 13, 21, 0, tzinfo=timezone.utc)
+        query = Mock(return_value=iter([]))
+        request = Mock(return_value={'projects': [], 'total_count': 0})
+        digest._collect(start, end, query, request, 'https://redmine.example', {})
+        self.assertEqual(query.call_args.args[0]['updated_on'], '>=2026-11-13T20:52:29Z')
+
     def test_daily_archive_and_manual_regeneration_are_idempotent(self):
         journal = [{"id": 11, "created_on": "2026-11-13T16:00:00Z",
                     "user": {"name": "Petr"},

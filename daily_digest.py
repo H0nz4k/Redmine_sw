@@ -144,7 +144,9 @@ def _stories(events, contexts):
 
 def _collect(start, end, issues, request, base, previous_projects):
     found = {}
-    for item in issues({"status_id": "*", "updated_on": ">=" + _stamp(start)}):
+    # Redmine accepts whole-second timestamps; floor to include the boundary.
+    query_start = _utc(start).replace(microsecond=0)
+    for item in issues({"status_id": "*", "updated_on": ">=" + _stamp(query_start)}):
         found[int(item["id"])] = item
     events = {}
     contexts = {}
