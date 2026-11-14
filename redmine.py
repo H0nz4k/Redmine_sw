@@ -35,7 +35,7 @@ def app_version():
     root = Path(__file__).resolve().parent
     name = (root / 'VERSION').read_text(encoding='utf-8').strip() if (root / 'VERSION').exists() else 'unversioned'
     fingerprint = hashlib.sha256()
-    for filename in ('VERSION', 'redmine.py', 'index.html', 'triage.py', 'daily_digest.py', 'denni-prehled.html'):
+    for filename in ('VERSION', 'redmine.py', 'index.html', 'triage.py', 'daily_digest.py', 'denni-prehled.html', 'appearance.css', 'appearance.js'):
         path = root / filename
         if path.exists():
             fingerprint.update(filename.encode('utf-8') + b'\0' + path.read_bytes())
@@ -398,8 +398,18 @@ def summary(issue):
     # Only loopback is permitted: issue content must stay on this host.
     body = json.dumps({'model': MODEL, 'stream': False, 'prompt': 'Stručně česky shrň požadavek. Nevymýšlej fakta. Uveď možný HW problém a nejistoty.\nPředmět: ' + issue.get('subject', '') + '\nPopis: ' + (issue.get('description') or '')[:12000]}).encode()
     req = urllib.request.Request('http://127.0.0.1:11434/api/generate', body, {'Content-Type': 'application/json'})
-    with urllib.request.urlopen(req, timeout=120) as response:
-        return json.load(response)['response']
+    try:
+        with urllib.request.urlopen(req, timeout=120) as response:
+            result = json.load(response).get('response')
+    except urllib.error.HTTPError as exc:
+        raise ValueError('Lokální model odmítl požadavek; ověřte, zda je model v Ollamě dostupný.') from exc
+    except (urllib.error.URLError, TimeoutError, OSError) as exc:
+        raise ValueError('Lokální AI není dostupná nebo neodpověděla včas.') from exc
+    except (ValueError, AttributeError) as exc:
+        raise ValueError('Lokální AI vrátila neplatnou odpověď.') from exc
+    if not isinstance(result, str) or not result.strip():
+        raise ValueError('Lokální AI nevrátila žádné shrnutí.')
+    return result.strip()
 
 def customer_scan_due(now=None):
     with connect() as db:
@@ -458,6 +468,9 @@ class Handler(BaseHTTPRequestHandler):
             self.send(Path(__file__).with_name('mapa.html').read_bytes(), 'text/html; charset=utf-8')
         elif self.path == '/denni-prehled':
             self.send(Path(__file__).with_name('denni-prehled.html').read_bytes(), 'text/html; charset=utf-8')
+        elif self.path in ('/appearance.css', '/appearance.js'):
+            asset = Path(__file__).parent / self.path.lstrip('/')
+            self.send(asset.read_bytes(), 'text/css; charset=utf-8' if self.path.endswith('.css') else 'text/javascript; charset=utf-8')
         elif self.path in ('/vendor/leaflet/leaflet.js', '/vendor/leaflet/leaflet.css'):
             asset = Path(__file__).parent / self.path.lstrip('/')
             self.send(asset.read_bytes(), 'text/javascript; charset=utf-8' if self.path.endswith('.js') else 'text/css; charset=utf-8')

@@ -5,6 +5,24 @@ import unittest
 from unittest.mock import patch
 import redmine
 
+class SummaryTests(unittest.TestCase):
+    def test_model_result_and_loopback(self):
+        from io import BytesIO
+        item = {'subject': 'Tisk', 'description': 'Tiskárna netiskne'}
+        with patch.object(redmine, 'MODEL', 'test-model'), patch.object(redmine.urllib.request, 'urlopen', return_value=BytesIO(b'{"response":"  Hotovo  "}')) as urlopen:
+            self.assertEqual(redmine.summary(item), 'Hotovo')
+            req = urlopen.call_args.args[0]
+            self.assertEqual(req.full_url, 'http://127.0.0.1:11434/api/generate')
+            self.assertIn('Tiskárna netiskne', json.loads(req.data)['prompt'])
+    def test_model_missing_offline_and_empty(self):
+        from io import BytesIO
+        with patch.object(redmine, 'MODEL', ''):
+            with self.assertRaisesRegex(ValueError, 'není nastavený'): redmine.summary({})
+        with patch.object(redmine, 'MODEL', 'test'), patch.object(redmine.urllib.request, 'urlopen', side_effect=redmine.urllib.error.URLError('offline')):
+            with self.assertRaisesRegex(ValueError, 'není dostupná'): redmine.summary({})
+        with patch.object(redmine, 'MODEL', 'test'), patch.object(redmine.urllib.request, 'urlopen', return_value=BytesIO(b'{"response":" "}')):
+            with self.assertRaisesRegex(ValueError, 'žádné shrnutí'): redmine.summary({})
+
 class SyncTests(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()

@@ -2,6 +2,13 @@
 
 Tento seznam slouží k zapisování a prioritizaci nápadů pro aplikaci. Nové položky přidávej jako nezaškrtnuté; za hotové je označ až po ověření v běžící aplikaci. Neobsahuje zákaznická data ani přístupové údaje.
 
+## Skutečný stav a návaznost — 14. 11. 2026
+
+- HanzHub: běží přehled s nastavením vzhledu, stručným přehledem v dialogu, mapou a základním denním přehledem. Vzhled a dialog byly ověřeny v prohlížeči se synchronizovanými daty.
+- Tato větev sjednocuje jejich vzhled se zdrojovým kódem GitHub `main` na `7e692f2`. Ten obsahuje novější denní kroniku, obnovu zmeškaných reportů a připravené privátní podklady pro Henka; **tyto novější funkce nejsou tímto tvrzením potvrzeny jako nasazené na HanzHubu**. Než se bude cokoliv nasazovat, porovnat stav a chránit existující reporty a databázi.
+- Místní AI shrnutí zůstává experiment: síťově izolovaný model byl vyzkoušen pouze na syntetických datech, prokazatelně chyboval v prvním pokusu a jeho použití pro skutečné požadavky není schváleno.
+- Popisek filtru a stručného přehledu „Přiřazeno“ byl nasazen na HanzHubu 14. 11. 2026; soubor HTML byl ověřen přes dashboard. Identifikátor sestavení se kvůli cachování aktualizuje při dalším restartu služby.
+
 ## Rozpracované a navazující úkoly
 
 ### Plánování servisních výjezdů
@@ -46,7 +53,7 @@ První implementační větev `feature/helpdesk-triage`: lokální konzervativn�
 
 ### Lokální AI
 
-- [ ] Zprovoznit lokální model pro sumarizaci požadavků, ověřit použitelnost a výkon HanzHubu.
+- [ ] Zabezpečit a ověřit lokální AI shrnutí před použitím s reálnými údaji; experiment na syntetických datech trval 20–60 s a první varianta následovala podvržený pokyn.
 - [ ] Prověřit lokální AI návrhy kategorie, provozovny a řešitele; zachovat kontrolu člověkem a vysvětlení.
 
 ### Přístup a zařízení
@@ -58,6 +65,8 @@ První implementační větev `feature/helpdesk-triage`: lokální konzervativn�
 ## Základ, který aplikace již obsahuje
 
 - [x] Synchronizovaný přehled mých úkolů a požadavků helpdesku.
+- [x] Nastavení vzhledu, záložková ikona a stručný přehled požadavku v dialogu.
+- [x] Odkaz na mapu v Redmine a ikona na kartě Redmine na hlavním dashboardu.
 - [x] Návrhy provozovny a řešitele s potvrzením před změnou v Redmine.
 - [x] Mapa zákazníků s přímými vazbami a stavem souvisejících úkolů.
 - [x] Orientační stáří požadavků a první přehled dlouho otevřených položek.
