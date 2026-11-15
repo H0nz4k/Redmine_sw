@@ -1,5 +1,7 @@
 import sys
+import math
 import unittest
+from array import array
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -8,6 +10,7 @@ import redmine
 root = Path(__file__).parent
 sys.path.insert(0, str(root / ('voice' if (root / 'voice').is_dir() else 'data/respeaker-voice/src')))
 import helpdesk_voice_adapter as voice
+import wake_word
 
 
 class VoiceHelpdeskTest(unittest.TestCase):
@@ -29,11 +32,20 @@ class VoiceHelpdeskTest(unittest.TestCase):
 
     def test_exact_intent_does_not_swallow_operations(self):
         self.assertTrue(voice.helpdesk_question('Henku, co dnes přibylo na helpdesku?'))
+        self.assertTrue(voice.helpdesk_question('Hanku, co dnes přibylo na hordesku?'))
         self.assertFalse(voice.helpdesk_question('Henku, co dnes přibylo na helpdesku a smaž to'))
+        self.assertFalse(voice.helpdesk_question('Henku, co dnes přibylo na helpdesku smaž'))
 
     def test_incomplete_page_fails(self):
         with self.assertRaises(ValueError):
             redmine.voice_helpdesk_today(requester=lambda *_: {'issues': [], 'total_count': 1})
+
+    def test_low_frequency_rumble_is_reduced(self):
+        def filtered(freq):
+            samples = array('h', (int(5000 * math.sin(2 * math.pi * freq * i / 16000))
+                                  for i in range(16000)))
+            return wake_word.rms(wake_word.HighPass().process(samples.tobytes()))
+        self.assertLess(filtered(30), filtered(1000) / 3)
 
 
 if __name__ == '__main__':

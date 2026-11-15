@@ -6,7 +6,7 @@ Základ hlasového kódu je ReSpeaker `fde55d8d80b2f7844afb56a3be34868414aa7479`
 
 1. Zkontrolovat stav fronty Henk, aktivní Redmine a runtime pinů; běžící nebo nejasné úlohy neopakovat. Ověřit stejné baseline SHA-256 níže, `git status` ReSpeakeru a neexistenci nových souborů. Při odchylce zastavit a znovu připravit.
 2. Vytvořit privátní zálohu čtyř nahrazovaných souborů se zachováním práv a vlastnictví, drop-inů a současných stavů služeb. Nikdy nepřepisovat databázi, souhrny, tajné klíče ani Henkovu frontu.
-3. Instalovat kandidátní `redmine.py`, čtyři hlasové soubory a uživatelskou jednotku `respeaker-voice.service`; vlastníci `hanz`, režimy 0644. Přidat uživatelský drop-in pro `redmine-assistant.service` s `Environment=REDMINE_VOICE_SOCKET=/run/user/1000/redmine-voice.sock`.
+3. Instalovat kandidátní `redmine.py`, čtyři hlasové soubory a uživatelskou jednotku `respeaker-voice.service`; vlastníci `hanz`, režimy 0644. Instalovat `redmine-voice.conf` jako `~/.config/systemd/user/redmine-assistant.service.d/60-voice.conf`.
 4. Provést user daemon-reload, restart pouze `redmine-assistant.service` a ověřit jeho AI souhrn, historii a stav. Spustit již nainstalovanou systémovou službu `respeaker-henk-inbox.service`, která je nyní enabled, ale inactive. Aktivovat a spustit novou uživatelskou hlasovou službu. Henkův worker, jeho runtime a existující plán souhrnů neměnit.
 5. S uživatelem ověřit mikrofon, správnou aktuální odpověď, mluvený zvuk a časy. Kandidát nastaví při naslouchání zelenou LED přes dříve fyzicky ověřené SPI0; před nasazením ověřit piny i sdílení sběrnice znovu.
 
@@ -20,4 +20,6 @@ Návrat: zastavit a zakázat novou hlasovou jednotku, obnovit čtyři zálohovan
 - `led_status.py`: `7f60a8894047d79fc2e18b0ed486e1d0b466d7af20469104e408b8126378f46e`
 - `henk_local_adapter.py` beze změny: `b0954597466fa8007c8ac9b48fe96f6a4cdd5e95ebe4fc59d79da4f3574d5e90`
 
-Před nasazením doplnit skutečný, chráněný staging se zálohami a ověřit návrat. Aktuální kandidát nesmí být označen za provozně ověřený, dokud neprojde řečená otázka s čerstvými daty.
+Izolovaná hlasová zkouška na HUBu 15. 11. prošla: čerstvý Redmine v danou chvíli vracel nula dnešních požadavků a uživatel potvrdil, že stejnou odpověď slyšel. Měřený čas od posledního vzorku hlasu k prvnímu PCM předanému přehrávači byl 4,26 s; nejde o akustické měření. Uživatel rovněž potvrdil fyzické zelené LED a výstup T60. Fish `/v1/asr` má `language=cs`, které je podle [dokumentace Fish](https://docs.fish.audio/features/speech-to-text) jen vodítkem. Zjištěné výrazné nízkofrekvenční rušení se v kandidátovi filtruje digitálně před detekcí a přepisem. Rozpoznání jedné věty neprokazuje spolehlivost probouzení ani obecné konverzace; provozní inbox je neaktivní a běžná konverzace přes něj zatím nebyla znovu vyzkoušena.
+
+Chráněný staging `/var/tmp/henk-voice-review-4Nr8Fr1T` obsahuje kandidáta a zálohy čtyř původních souborů; porovnání záloh s baseline a obnova v izolované kopii prošly. Staging nemusí přežít restart: před případným schváleným nasazením znovu ověřit obsah, otisky, konfiguraci, stav fronty a služeb.

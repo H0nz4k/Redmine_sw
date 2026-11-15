@@ -8,6 +8,7 @@ from array import array
 from collections import deque
 import argparse
 import json
+import math
 import os
 from pathlib import Path
 import re
@@ -74,6 +75,28 @@ def stereo_to_mono(pcm, channel="mix"):
     return mono.tobytes()
 
 
+class HighPass:
+    """Remove measured sub-120 Hz microphone rumble without changing ALSA."""
+    def __init__(self):
+        self.alpha = math.exp(-2 * math.pi * 120 / RATE)
+        self.previous = 0
+        self.output = 0.0
+
+    def process(self, pcm):
+        samples = array('h')
+        samples.frombytes(pcm)
+        if sys.byteorder != 'little':
+            samples.byteswap()
+        result = array('h')
+        for sample in samples:
+            self.output = self.alpha * (self.output + sample - self.previous)
+            self.previous = sample
+            result.append(max(-32768, min(32767, int(self.output))))
+        if sys.byteorder != 'little':
+            result.byteswap()
+        return result.tobytes()
+
+
 def read_exact(stream, length):
     """A pipe is allowed to return partial reads; accumulate a whole frame."""
     result = bytearray()
@@ -97,7 +120,7 @@ def rms(pcm):
 
 class Capture:
     """No cloud upload before wake. Bounded streaming PCM capture."""
-    def __init__(self, *, max_seconds=12, min_seconds=0.5, silence_seconds=0.65,
+    def __init__(self, *, max_seconds=12, min_seconds=0.5, silence_seconds=1.2,
                  threshold=650, pre_roll=0.9):
         self.max_samples = int(max_seconds * RATE)
         self.min_samples = int(min_seconds * RATE)
@@ -178,6 +201,7 @@ def run(model_path, adapter, threshold, once=False, debug=False, legacy_tts=Fals
     model = Model(str(model_path))
     detector = build_wake_recognizer(model, RATE, KaldiRecognizer)
     capture = Capture(threshold=threshold)
+    highpass = HighPass()
     stage_started = None
     last_voice_at = None
     last_partial = None
@@ -209,7 +233,7 @@ def run(model_path, adapter, threshold, once=False, debug=False, legacy_tts=Fals
                         f"arecord skončil (kód {process.returncode}): "
                         + (detail or "nezískána žádná data z mikrofonu")
                     )
-                block = stereo_to_mono(raw, channel=mic_channel)
+                block = highpass.process(stereo_to_mono(raw, channel=mic_channel))
                 if debug and time.monotonic() - last_meter >= 3:
                     print(f"[mikrofon] RMS={rms(block)} (práh {threshold})", flush=True)
                     last_meter = time.monotonic()
@@ -315,6 +339,7 @@ def run(model_path, adapter, threshold, once=False, debug=False, legacy_tts=Fals
                         errors.seek(0)
                         errors.truncate()
                         process = start_recorder()
+                        highpass = HighPass()
                         leds.set("idle")
                         print("Znovu čekám na oslovení „Henku“.", flush=True)
                 if once:

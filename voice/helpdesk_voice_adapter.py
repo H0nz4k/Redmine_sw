@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Read-only helpdesk answer; retain the normal Henk inbox for other speech."""
 import http.client
+import difflib
 import json
 import os
 import re
@@ -20,7 +21,20 @@ def helpdesk_question(text):
     text = unicodedata.normalize('NFKD', text.casefold())
     text = ''.join(c for c in text if not unicodedata.combining(c))
     text = re.sub(r'[^a-z0-9]+', ' ', text).strip()
-    return bool(re.fullmatch(r'(?:(?:ahoj |cau |hej )?(?:henku|henk|hanku|henry) )?(?:co|kolik) (?:dnes|dneska) (?:pribylo|pribyly|pribyva|je noveho|je novych) (?:na |v )?(?:helpdesku|helpdesk|help desku)', text))
+    match = re.fullmatch(r'(?:(?:ahoj |cau |hej )?(?:henku|henk|hanku|henry) )?'
+                         r'(?:co|kolik) ([a-z]+) ([a-z]+)(?: na| v)? ([a-z]+(?: [a-z]+)?)', text)
+    if not match:
+        return False
+    day, verb, target = match.groups()
+    def similar(word, expected, minimum):
+        return any(difflib.SequenceMatcher(None, word, value).ratio() >= minimum for value in expected)
+    if ' ' in target and target not in ('help desk', 'help desku'):
+        return False
+    target = target.replace(' ', '')
+    return (similar(day, ('dnes', 'dneska'), .75)
+            and similar(verb, ('pribylo', 'pribyly', 'pribyva'), .75)
+            and target.startswith('h') and 6 <= len(target) <= 14
+            and similar(target, ('helpdesku', 'helpdesk'), .65))
 
 
 class LocalConnection(http.client.HTTPConnection):
