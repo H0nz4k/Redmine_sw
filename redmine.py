@@ -6,17 +6,22 @@ from functools import lru_cache
 import os
 import sqlite3
 import socketserver
+import socket
+import struct
+import stat
 import threading
 import time
 import urllib.parse
 import urllib.request
 import urllib.error
 from datetime import datetime, timezone
+from datetime import timedelta
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from suggestions import customer_suggestions
 from triage import analyze_issue
 import daily_digest
+import henk_redaction
 
 BASE = os.environ.get('REDMINE_URL', 'https://redmine.altisima.cz').rstrip('/')
 KEY = os.environ.get('REDMINE_API_KEY', '')
@@ -27,6 +32,7 @@ MODEL = os.environ.get('OLLAMA_MODEL', '')
 MAP_KEY = os.environ.get('MAPY_API_KEY', '')
 CUSTOMERS = Path(os.environ.get('CUSTOMERS_FILE', 'data/customers.json'))
 UNIX_SOCKET = os.environ.get('REDMINE_UNIX_SOCKET', '')
+VOICE_SOCKET = os.environ.get('REDMINE_VOICE_SOCKET', '')
 ALLOWED_ORIGINS = {value.strip() for value in os.environ.get('REDMINE_ALLOWED_ORIGINS', '').split(',') if value.strip()}
 
 @lru_cache(maxsize=1)
@@ -59,7 +65,9 @@ def digest_request(path, params=None):
     """Only Redmine issue/project text endpoints; never follow redirects."""
     params = params or {}
     if path == '/issues.json':
-        allowed = {'status_id', 'updated_on', 'limit', 'offset'}
+        allowed = {'status_id', 'updated_on', 'created_on', 'project_id', 'limit', 'offset'}
+        if 'project_id' in params and params['project_id'] != 'helpdesk':
+            raise ValueError('Nepovolený projekt hlasového přehledu.')
     elif path == '/projects.json':
         allowed = {'limit', 'offset'}
     elif re.fullmatch(r'/issues/[1-9][0-9]*\.json', path):
@@ -94,6 +102,41 @@ def issues(params):
 
 def digest_issues(params):
     yield from _issues_with(digest_request, params)
+
+
+def voice_helpdesk_today(now=None, requester=digest_request):
+    """Fetch only new Helpdesk issues, without attachments or issue links."""
+    now = daily_digest._utc(now or datetime.now(timezone.utc))
+    today = now.astimezone(daily_digest.TZ).date()
+    query_day = (today - timedelta(days=1)).isoformat()
+    rows = []
+    for offset in range(0, 500, 100):
+        page = requester('/issues.json', {'project_id': 'helpdesk', 'status_id': '*',
+                         'created_on': '>=' + query_day, 'limit': 100, 'offset': offset})
+        items, total = page['issues'], page['total_count']
+        if not isinstance(items, list) or type(total) is not int or total < 0:
+            raise ValueError('Redmine vrátil neplatný seznam.')
+        for issue in items:
+            iid = issue.get('id')
+            if type(iid) is not int or iid <= 0:
+                raise ValueError('Redmine vrátil neplatné ID.')
+            created = daily_digest._utc(issue['created_on'])
+            if created <= now and created.astimezone(daily_digest.TZ).date() == today:
+                title = henk_redaction.text(issue.get('subject') or '')
+                title = re.sub(r'\s+', ' ', title).strip()
+                if len(title) > 120:
+                    title = title[:117] + '...'
+                rows.append({'id': iid, 'subject': title})
+        if offset + len(items) >= total:
+            break
+        if not items:
+            raise ValueError('Redmine vrátil neúplný seznam.')
+    else:
+        raise ValueError('Příliš mnoho výsledků pro úplný hlasový přehled.')
+    if len({row['id'] for row in rows}) != len(rows):
+        raise ValueError('Redmine vrátil duplicitní požadavek.')
+    return {'day': today.isoformat(), 'count': len(rows), 'items': rows[:5],
+            'remaining': max(0, len(rows)-5)}
 
 def classify(issue):
     content = ' ' + (issue.get('subject', '') + ' ' + (issue.get('description') or '')).lower() + ' '
@@ -623,6 +666,45 @@ class Handler(BaseHTTPRequestHandler):
             self.send({'error':str(exc)[:300]}, status=400)
 
 if hasattr(socketserver, 'UnixStreamServer'):
+    class VoiceHandler(BaseHTTPRequestHandler):
+        def log_message(self, *args):
+            pass
+
+        def do_GET(self):
+            try:
+                _, uid, _ = struct.unpack('3i', self.connection.getsockopt(
+                    socket.SOL_SOCKET, socket.SO_PEERCRED, struct.calcsize('3i')))
+                if uid != os.getuid() or self.path != '/helpdesk/today':
+                    self.send_error(403)
+                    return
+                payload = json.dumps(voice_helpdesk_today(), ensure_ascii=False).encode('utf-8')
+                self.send_response(200)
+            except Exception:
+                payload = b'{"error":"helpdesk_unavailable"}'
+                self.send_response(503)
+            self.send_header('Content-Type', 'application/json; charset=utf-8')
+            self.send_header('Content-Length', str(len(payload)))
+            self.end_headers()
+            self.wfile.write(payload)
+
+    class VoiceUnixServer(socketserver.ThreadingMixIn, socketserver.UnixStreamServer):
+        daemon_threads = True
+
+        def __init__(self, path):
+            self.server_name = 'localhost'
+            self.server_port = 0
+            parent = Path(path).parent
+            info = parent.stat()
+            if info.st_uid != os.getuid() or info.st_mode & 0o077:
+                raise RuntimeError('Nezabezpečený adresář hlasového socketu.')
+            if os.path.lexists(path):
+                existing = os.lstat(path)
+                if existing.st_uid != os.getuid() or not stat.S_ISSOCK(existing.st_mode):
+                    raise RuntimeError('Cesta hlasového socketu není vlastní socket.')
+                os.unlink(path)
+            super().__init__(path, VoiceHandler)
+            os.chmod(path, 0o600)
+
     class UnixHTTPServer(socketserver.ThreadingMixIn, socketserver.UnixStreamServer):
         daemon_threads = True
         def __init__(self, path, port):
@@ -643,5 +725,8 @@ if __name__ == '__main__':
             socket_path.unlink()
         local_socket = UnixHTTPServer(UNIX_SOCKET, port)
         threading.Thread(target=local_socket.serve_forever, daemon=True).start()
+    if VOICE_SOCKET:
+        voice_socket = VoiceUnixServer(VOICE_SOCKET)
+        threading.Thread(target=voice_socket.serve_forever, daemon=True).start()
     print(f'Redmine asistent: http://127.0.0.1:{port}', flush=True)
     ThreadingHTTPServer(('127.0.0.1', port), Handler).serve_forever()

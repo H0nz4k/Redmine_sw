@@ -1,0 +1,16 @@
+[Unit]
+Description=Henk voice via ReSpeaker and Fish Audio
+After=network-online.target redmine-assistant.service
+
+[Service]
+Type=simple
+WorkingDirectory=%h/ReSpeaker
+Environment=REDMINE_VOICE_SOCKET=/run/user/1000/redmine-voice.sock
+Environment=HENK_LED_SPI_DEVICE=/dev/spidev0.0
+ExecStart=%h/ReSpeaker/.venv/bin/python %h/ReSpeaker/src/wake_word.py --adapter %h/ReSpeaker/src/helpdesk_voice_adapter.py
+Restart=on-failure
+RestartSec=5
+UMask=0077
+
+[Install]
+WantedBy=default.target

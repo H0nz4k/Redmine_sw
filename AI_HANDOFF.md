@@ -1,5 +1,11 @@
 # Redmine a Henk — nasazený souhrn
 
+## Rozpracovaná hlasová etapa 15. 11. 2026
+
+Produkční Redmine integrace zůstala beze změny. Pro hlas vzniká kandidát ve `voice/` a volitelný soukromý socket v `redmine.py`; přístup ke skutečnému Redmine vracel pro aktuální den nula nových helpdeskových požadavků. Izolovaný dotaz používá pouze `/issues.json`, všechny stavy a žádný endpoint příloh. Cílené testy Redmine a hlasové cesty: 35 OK na HUBu. Hlasový inbox je nainstalovaný a enabled, avšak inactive; trvalé naslouchání dosud neběží.
+
+Uživatel fyzicky potvrdil zvuk z Creative T60 i zelené LED ReSpeakeru na SPI0. Při pokusech došlo i k falešné aktivaci, kdy uživatel ještě nevyslovil otázku, a zazněla pravdivá zpráva o nedostupném Henkově inboxu. Přehrání chyby mělo softwarovou prodlevu 3,42 s od posledního vzorku nad prahem po první PCM do přehrávače, nikoli ověřenou latenci správné odpovědi. Fyzickou správnou hlasovou odpověď o helpdesku nelze zatím tvrdit. Fish `/v1/asr` už posílá `language=cs`; u modelu Pro jde podle dokumentace jen o vodítko, nikoli vynucení jazyka. `voice/DEPLOYMENT.md` zaznamenává kandidáta, baseline a navržený návrat; nasazení této etapy vyžaduje samostatné schválení a ověřený staging.
+
 Větev `feature/henk-digest-continuation` zachovává všechny dosavadní commity. Uživatel schválil nasazení kandidáta `55385e9` / `ecb7ae5`; ten je nasazen a produkční build je `183ee9f600`. Uživatel schvaluje zpracování textů Redmine přes OpenAI a zakazuje načítání příloh a následování odkazů. Klíče se nesmějí vypisovat, kopírovat do Gitu ani logovat.
 
 ## Ověřený kandidát
