@@ -108,6 +108,15 @@ def _digest_excerpt(value, limit=340):
     return (cut or value[:limit]).rstrip(" ,.;:") + "…"
 
 
+def _source_details(journal):
+    details = journal.get("details") or []
+    if not isinstance(details, list) or any(not isinstance(item, dict) for item in details):
+        raise ValueError("Redmine vrátil neplatnou historii změn.")
+    return [item for item in details
+            if str(item.get("property", "")).lower() not in ("attachment", "attachments")
+            and str(item.get("name", "")).lower() not in ("attachment", "attachments")]
+
+
 def _stories(events, contexts):
     """One readable paragraph per changed issue; keep source links and detailed list."""
     groups = {}
@@ -183,7 +192,7 @@ def _collect(start, end, issues, request, base, previous_projects):
                     {
                         "id": j.get("id"), "created_on": j.get("created_on"),
                         "author": j.get("user") or {}, "notes": j.get("notes") or "",
-                        "details": j.get("details") or [],
+                        "details": _source_details(j),
                     }
                     for j in detail["journals"]
                     if j.get("created_on") and _utc(j["created_on"]) <= end
@@ -346,13 +355,13 @@ def generate(connect, issues, request, base, now=None):
         model = os.getenv("HENK_DIGEST_MODEL", "").strip()
         ai_record = None
         if not model:
-            ai_text = ("## Místní AI shrnutí\n\n"
+            ai_text = ("## AI shrnutí\n\n"
                        "AI shrnutí není aktivováno. Zůstává faktický soupis Redminu.")
         else:
             try:
                 result_text = henk_digest.summarize_private(private_source, base, model, connect=connect)
                 generated = _stamp(datetime.now(timezone.utc))
-                ai_text = ("## Místní AI shrnutí\n\n"
+                ai_text = ("## AI shrnutí\n\n"
                            "Vytvořeno: " + _display_time(generated) + "; období: " + _display_time(start) +
                            " až " + _display_time(end) + " (Europe/Prague). Podklady jsou omezeny přístupem účtu Redmine.\n\n" +
                            result_text.split("\n", 1)[1].lstrip())
@@ -360,7 +369,7 @@ def generate(connect, issues, request, base, now=None):
             except Exception:
                 # The factual daily digest must survive a model outage, invalid
                 # references, oversized input or rejected ungrounded conclusions.
-                ai_text = ("## Místní AI shrnutí\n\n"
+                ai_text = ("## AI shrnutí\n\n"
                            "AI shrnutí není dostupné nebo nebylo ověřitelné. "
                            "Faktický soupis Redminu zůstává zachován.")
         if ai_record is None:

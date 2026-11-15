@@ -284,6 +284,20 @@ class DigestTests(unittest.TestCase):
         self.assertNotIn(tomorrow_comment, report)
         self.assertNotIn("henk-input", report)
 
+    def test_generation_never_requests_attachments_or_keeps_attachment_metadata(self):
+        journal = [{"id": 8, "created_on": "2026-11-13T14:00:00Z", "user": {"name": "Eva"},
+                    "notes": "Prověřujeme závadu.", "details": [
+                        {"property": "attachment", "name": "SYNTHETIC_ATTACHMENT.pdf", "new_value": "321"},
+                        {"property": "attr", "name": "status_id", "new_value": "2"}]}]
+        self.issue(71, "2026-11-13T09:00:00Z", "2026-11-13T14:00:00Z", journals=journal)
+        self.generate("2026-11-13T16:30:00+00:00")
+        payload = json.loads((digest.REPORT_DIR / "henk-input" / "2026-11-13.json").read_text(encoding="utf-8"))
+        self.assertNotIn("SYNTHETIC_ATTACHMENT", json.dumps(payload))
+        self.assertEqual(len(payload["issues"][0]["journals"][0]["details"]), 1)
+        for path, params in self.calls:
+            self.assertNotIn("/attachments", path.lower())
+            self.assertNotIn("attachment", str(params).lower())
+
     def test_opt_in_ai_narrative_is_in_report_and_cites_journal(self):
         journal = [{"id": 11, "created_on": "2026-11-13T14:00:00Z",
                     "user": {"name": "Petr"}, "notes": "Zkontroloval DNS.", "details": []}]
@@ -298,7 +312,7 @@ class DigestTests(unittest.TestCase):
                 self.generate("2026-11-13T16:30:00+00:00")
                 model.assert_called_once()
         report = digest.read_report(self.connect, "2026-11-13")
-        self.assertIn("## Místní AI shrnutí", report)
+        self.assertIn("## AI shrnutí", report)
         self.assertIn("Zkontroloval DNS", report)
         self.assertIn("Vytvořeno:", report)
         self.assertIn("13.11.2026 17:30:00 (Europe/Prague)", report)

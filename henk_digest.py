@@ -1,8 +1,4 @@
-"""Private, opt-in, loopback-only AI narration of Redmine daily digests.
-
-This is an adapter for Redmine's already existing local Ollama transport.
-It does NOT claim a separate Henk runtime API exists or is active.
-"""
+"""Evidence-checked, opt-in AI narration of Redmine daily digests."""
 import hashlib
 import json
 import os
@@ -11,6 +7,9 @@ import stat
 import urllib.request
 from datetime import datetime, timezone
 from pathlib import Path
+
+import henk_redaction
+import henk_mcp
 
 OLLAMA_URL = "http://127.0.0.1:11434/api/generate"
 MAX_SOURCE_BYTES = 8 * 1024 * 1024
@@ -77,7 +76,7 @@ def _read_source(path):
     return payload, start, end
 
 
-def _issue_context(issue, start, end):
+def _issue_context(issue, start, end, *, bounded=True):
     iid = int(issue["id"])
     if iid <= 0:
         raise ValueError("Neplatné ID úkolu.")
@@ -117,7 +116,7 @@ def _issue_context(issue, start, end):
         "snapshot_safe": snapshot_safe,
         "journals_through_cutoff": journals,
     }
-    if len(json.dumps(context, ensure_ascii=False)) > MAX_ISSUE_CHARS:
+    if bounded and len(json.dumps(context, ensure_ascii=False)) > MAX_ISSUE_CHARS:
         raise ValueError(f"Podklady úkolu #{iid} přesahují kontext modelu.")
     return context, known, within_period
 
@@ -171,7 +170,10 @@ def _parse_answer(raw, iid, known, within_period, context):
     sentences = [part for part in re.split(r"(?<=[.!?])\s+", summary.strip()) if part]
     if not 1 <= len(sentences) <= 4:
         raise ValueError("Výběr musí obsahovat jednu až čtyři věty.")
-    if any(mark in summary for mark in ("[", "]", "<", ">", "`", "{", "}", "\n", "\r")):
+    formatting = summary
+    for marker in (henk_redaction.REMOVED, henk_redaction.LINK_REMOVED, "[příloha vynechána]"):
+        formatting = formatting.replace(marker, "")
+    if any(mark in formatting for mark in ("[", "]", "<", ">", "`", "{", "}", "\n", "\r")):
         raise ValueError("Model vrátil nepovolené formátování.")
     if re.search(r"https?://|www\.", summary, re.I):
         raise ValueError("Model vložil vlastní odkaz.")
@@ -199,7 +201,7 @@ def _parse_answer(raw, iid, known, within_period, context):
     source_sentences = set()
     for text in evidence:
         for part in re.split(r"(?<=[.!?])\s+", text.strip()):
-            if part:
+            if part and not INSTRUCTION_MARKERS.search(part):
                 source_sentences.add(" ".join(part.split()))
     if any(" ".join(sentence.split()) not in source_sentences for sentence in sentences):
         raise ValueError("Model vrátil větu, která není úplnou citací uvedeného zdroje.")
@@ -209,6 +211,38 @@ def _parse_answer(raw, iid, known, within_period, context):
         if not any(" ".join(sentence.split()) in period_sentences for sentence in sentences):
             raise ValueError("Výběr necituje žádný komentář z reportovaného období.")
     return " ".join(summary.split()), ids
+
+
+def _henk_context_parts(context):
+    """Partition long narrative sources at sentence boundaries, never truncate."""
+    base = {**context, "subject_snapshot": "", "description_snapshot": "",
+            "status_snapshot": {}, "journals_through_cutoff": []}
+    pieces = []
+    def split(value):
+        sentences = re.split(r"(?<=[.!?])\s+", value.strip()) if value.strip() else []
+        batch = []
+        for sentence in sentences:
+            if len(sentence.encode("utf-8")) > 1200:
+                raise ValueError("Věta podkladu přesahuje limit Henka; není možné ji bezpečně rozdělit.")
+            if batch and len((" ".join(batch + [sentence])).encode("utf-8")) > 1200:
+                yield " ".join(batch)
+                batch = []
+            batch.append(sentence)
+        if batch:
+            yield " ".join(batch)
+    if context["snapshot_safe"]:
+        for field in ("subject_snapshot", "description_snapshot"):
+            for part in split(context[field]):
+                pieces.append({**base, field: part})
+    for journal in context["journals_through_cutoff"]:
+        # Do not make a later part of an instruction-bearing comment appear
+        # independently trustworthy after the comment has been split.
+        if INSTRUCTION_MARKERS.search(journal["notes"]):
+            raise ValueError("Dlouhý zdroj obsahuje pokus o zadání instrukce; jeho části nelze bezpečně citovat.")
+        for part in split(journal["notes"]):
+            item = {**journal, "notes": part, "details": []}
+            pieces.append({**base, "journals_through_cutoff": [item]})
+    return pieces
 
 
 def summarize_private(path, base_url, model, inference=None, connect=None):
@@ -223,7 +257,14 @@ def summarize_private(path, base_url, model, inference=None, connect=None):
         raise ValueError("Pro AI shrnutí nejsou žádné změněné úkoly.")
     if not re.fullmatch(r"https?://[^\s]+", base_url or ""):
         raise ValueError("Neplatný odkaz na Redmine.")
-    inference = inference or _ollama
+    use_henk = inference is None and os.getenv("HENK_DIGEST_BACKEND", "ollama") == "henk"
+    if inference is None:
+        if use_henk:
+            if connect is None:
+                raise ValueError("Henk vyžaduje soukromou databázi pro obnovení požadavků.")
+            inference = lambda prompt, name: henk_mcp.infer(prompt, name, connect)
+        else:
+            inference = _ollama
     revision = os.getenv("HENK_DIGEST_MODEL_REVISION", "").strip().lower()
     use_cache = connect is not None and bool(re.fullmatch(r"[0-9a-f]{64}", revision))
     if use_cache:
@@ -232,27 +273,40 @@ def summarize_private(path, base_url, model, inference=None, connect=None):
     issue_ids = set()
     paragraphs = ["## Henk – inteligentní shrnutí", ""]
     for issue in payload["issues"]:
-        context, known, within_period = _issue_context(issue, start, end)
+        context, known, within_period = _issue_context(issue, start, end, bounded=not use_henk)
+        # The external Henk path must never receive attachment metadata,
+        # link targets, or recognizable credentials. Validation below uses
+        # exactly the sanitized evidence seen by the model.
+        context = henk_redaction.context(context)
         iid = context["issue_id"]
         if iid in issue_ids:
             raise ValueError("Duplicitní ID úkolu v reportu.")
         issue_ids.add(iid)
-        # Cutoff timestamps are displayed deterministically by the caller. For
-        # a retry, only the actual set of in-period sources affects this prompt.
-        prompt_context = {k: v for k, v in context.items() if k not in ("period_start_utc", "period_end_utc")}
-        prompt_context["period_source_ids"] = sorted(within_period)
-        prompt = json.dumps(prompt_context, ensure_ascii=False, sort_keys=True)
-        key_data = json.dumps(["issue-quote-v1", model, revision, SYSTEM_RULES, prompt], ensure_ascii=False).encode("utf-8")
-        cache_key = hashlib.sha256(key_data).hexdigest()
-        row = None
-        if use_cache:
-            with connect() as db:
-                row = db.execute("SELECT response FROM digest_ai_part_cache WHERE cache_key=?", (cache_key,)).fetchone()
-        raw = row[0] if row else inference(prompt, model)
-        summary, ids = _parse_answer(raw, iid, known, within_period, context)
-        if use_cache and row is None:
-            with connect() as db:
-                db.execute("INSERT OR IGNORE INTO digest_ai_part_cache(cache_key,response) VALUES (?,?)", (cache_key, raw))
+        complete = json.dumps(context, ensure_ascii=False)
+        parts = _henk_context_parts(context) if use_henk and (len(complete) > 3000 or len(complete.encode("utf-8")) > 10000) else [context]
+        if not parts:
+            raise ValueError("V úkolu není text pro shrnutí; faktické změny zůstávají v přehledu.")
+        summaries, all_ids = [], set()
+        for part in parts:
+            part_ids = {j["source_id"] for j in part["journals_through_cutoff"]}
+            part_period = within_period.intersection(part_ids)
+            prompt_context = dict(part, period_source_ids=sorted(part_period))
+            prompt = json.dumps(prompt_context, ensure_ascii=False, sort_keys=True)
+            key_data = json.dumps(["issue-quote-v1", model, revision, SYSTEM_RULES, prompt], ensure_ascii=False).encode("utf-8")
+            cache_key = hashlib.sha256(key_data).hexdigest()
+            row = None
+            if use_cache:
+                with connect() as db:
+                    row = db.execute("SELECT response FROM digest_ai_part_cache WHERE cache_key=?", (cache_key,)).fetchone()
+            raw = row[0] if row else inference(prompt, model)
+            summary, ids = _parse_answer(raw, iid, known.intersection(part_ids | {f"issue:{iid}"}), part_period, part)
+            if use_cache and row is None:
+                with connect() as db:
+                    db.execute("INSERT OR IGNORE INTO digest_ai_part_cache(cache_key,response) VALUES (?,?)", (cache_key, raw))
+            summaries.append(summary)
+            all_ids.update(ids)
+        summary = " ".join(summaries)
+        ids = sorted(all_ids)
         authors = {j["source_id"]: re.sub(r"[\[\]<>\r\n]", " ", j.get("author", "")).strip()
                    for j in context["journals_through_cutoff"]}
         source_details = ", ".join(x + (" (" + authors[x] + ")" if authors.get(x) else "")
