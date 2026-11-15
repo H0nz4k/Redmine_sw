@@ -32,7 +32,7 @@ MCP_COMMAND = (
 TRUSTED_RUNTIME = {
     MCP_DIR + '/agent_worker.py': 'ea21e90994111075ac88cb01e457f3208d8d759b780e12f46168c08b50c30cad',
     MCP_DIR + '/channel.py': '9207b6effd4174852a1f136f16bbc91750a219b0da28a3b8872096d30765da8a',
-    MCP_DIR + '/henk_openai.py': 'ab7a9558518751c38c57defec2a238ce8fe774d68522f4f6276a53c1a4e5b18e',
+    MCP_DIR + '/henk_openai.py': '51effe2169eaf35d545de48f74e622b1be12b7b7fb33331afbf5f74617c9ae4e',
     MCP_DIR + '/henk_redaction.py': '033f8e177b293be03f0981a8cd37bbf45a99a9e064402979fde2e9fdb55de892',
 }
 
@@ -145,7 +145,9 @@ def infer(prompt, model, connect, *, call=_call, verify=verify_runtime,
     if len(body) > MAX_MESSAGE_CHARS or len(body.encode("utf-8")) > 16000:
         raise HenkUnavailable("Podklady přesahují limit jedné zprávy Henka.")
     verify()  # Never send to an older worker that might invoke operations.
-    fingerprint = hashlib.sha256((model + "\0" + body).encode("utf-8")).hexdigest()
+    # A changed summarizer must not reuse an answer from a previous runtime.
+    runtime = TRUSTED_RUNTIME[MCP_DIR + '/henk_openai.py']
+    fingerprint = hashlib.sha256((runtime + "\0" + model + "\0" + body).encode("utf-8")).hexdigest()
     with connect() as db:
         db.execute("CREATE TABLE IF NOT EXISTS digest_henk_requests (fingerprint TEXT PRIMARY KEY, request_id TEXT NOT NULL, expires INTEGER NOT NULL)")
         db.execute("INSERT OR IGNORE INTO digest_henk_requests VALUES (?,?,?)",

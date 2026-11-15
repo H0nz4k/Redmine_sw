@@ -168,8 +168,11 @@ def _parse_answer(raw, iid, known, within_period, context):
     if not isinstance(summary, str) or not (10 <= len(summary) <= MAX_SUMMARY_CHARS):
         raise ValueError("Shrnutí nemá platnou délku.")
     sentences = [part for part in re.split(r"(?<=[.!?])\s+", summary.strip()) if part]
-    if not 1 <= len(sentences) <= 4:
-        raise ValueError("Výběr musí obsahovat jednu až čtyři věty.")
+    # The model may preserve short source statements or abbreviations which
+    # split into more than four parts; literal-source verification below and
+    # the overall length limit remain mandatory.
+    if not 1 <= len(sentences) <= 8:
+        raise ValueError("Výběr musí obsahovat jednu až osm částí.")
     formatting = summary
     for marker in (henk_redaction.REMOVED, henk_redaction.LINK_REMOVED, "[příloha vynechána]"):
         formatting = formatting.replace(marker, "")
@@ -181,7 +184,9 @@ def _parse_answer(raw, iid, known, within_period, context):
         raise ValueError("Model nevrátil ověřitelné zdroje.")
     if len(ids) != len(set(ids)) or not set(ids) <= known or f"issue:{iid}" not in ids:
         raise ValueError("Model odkazuje na neexistující zdroj.")
-    if within_period and not set(ids).intersection(within_period):
+    period_notes = {j["source_id"] for j in context["journals_through_cutoff"]
+                    if j["source_id"] in within_period and j["notes"].strip()}
+    if period_notes and not set(ids).intersection(period_notes):
         raise ValueError("Model neodkázal na událost v reportovaném dni.")
     # IDs alone do not establish support. Until a semantic verifier is
     # available, publish only complete source sentences as attributed quotes;
@@ -203,12 +208,15 @@ def _parse_answer(raw, iid, known, within_period, context):
         for part in re.split(r"(?<=[.!?])\s+", text.strip()):
             if part and not INSTRUCTION_MARKERS.search(part):
                 source_sentences.add(" ".join(part.split()))
-    if any(" ".join(sentence.split()) not in source_sentences for sentence in sentences):
+    def is_source_sentence(sentence, sources):
+        text = " ".join(sentence.split())
+        return text in sources or (text.endswith(".") and text[:-1] in sources)
+    if any(not is_source_sentence(sentence, source_sentences) for sentence in sentences):
         raise ValueError("Model vrátil větu, která není úplnou citací uvedeného zdroje.")
     if period_evidence:
         period_sentences = {" ".join(part.split()) for text in period_evidence
                             for part in re.split(r"(?<=[.!?])\s+", text.strip()) if part}
-        if not any(" ".join(sentence.split()) in period_sentences for sentence in sentences):
+        if not any(is_source_sentence(sentence, period_sentences) for sentence in sentences):
             raise ValueError("Výběr necituje žádný komentář z reportovaného období.")
     return " ".join(summary.split()), ids
 
@@ -286,7 +294,7 @@ def summarize_private(path, base_url, model, inference=None, connect=None):
         parts = _henk_context_parts(context) if use_henk and (len(complete) > 3000 or len(complete.encode("utf-8")) > 10000) else [context]
         if not parts:
             raise ValueError("V úkolu není text pro shrnutí; faktické změny zůstávají v přehledu.")
-        summaries, all_ids = [], set()
+        summaries, all_ids, omitted_segments = [], set(), 0
         for part in parts:
             part_ids = {j["source_id"] for j in part["journals_through_cutoff"]}
             part_period = within_period.intersection(part_ids)
@@ -300,6 +308,10 @@ def summarize_private(path, base_url, model, inference=None, connect=None):
                     row = db.execute("SELECT response FROM digest_ai_part_cache WHERE cache_key=?", (cache_key,)).fetchone()
             raw = row[0] if row else inference(prompt, model)
             summary, ids = _parse_answer(raw, iid, known.intersection(part_ids | {f"issue:{iid}"}), part_period, part)
+            omitted = json.loads(raw).get("omitted_segments", 0)
+            if type(omitted) is not int or not 0 <= omitted <= 100000:
+                raise ValueError("Model vrátil neplatný počet vynechaných částí.")
+            omitted_segments += omitted
             if use_cache and row is None:
                 with connect() as db:
                     db.execute("INSERT OR IGNORE INTO digest_ai_part_cache(cache_key,response) VALUES (?,?)", (cache_key, raw))
@@ -307,7 +319,9 @@ def summarize_private(path, base_url, model, inference=None, connect=None):
             all_ids.update(ids)
         summary = " ".join(summaries)
         ids = sorted(all_ids)
-        authors = {j["source_id"]: re.sub(r"[\[\]<>\r\n]", " ", j.get("author", "")).strip()
+        authors = {j["source_id"]: ", ".join(filter(None, [
+                       re.sub(r"[\[\]<>\r\n]", " ", j.get("author", "")).strip(),
+                       _utc(j["created_on"]).strftime("%d.%m.%Y %H:%M UTC")]))
                    for j in context["journals_through_cutoff"]}
         source_details = ", ".join(x + (" (" + authors[x] + ")" if authors.get(x) else "")
                                    for x in ids if x != f"issue:{iid}")
@@ -318,7 +332,9 @@ def summarize_private(path, base_url, model, inference=None, connect=None):
         cited_notes = sum(j["source_id"] in ids for j in available_notes)
         coverage = (" Odkázané komentáře: " + str(cited_notes) + " z " + str(len(available_notes)) +
                     "; výběr není úplným přepisem.") if available_notes else ""
-        paragraphs.extend([label + " – Citace ze zdrojů: " + summary + provenance + coverage, ""])
+        omitted_notice = (" Počet částí zdroje, které nelze bezpečně citovat: " + str(omitted_segments) +
+                          "; podrobnosti jsou v původním úkolu.") if omitted_segments else ""
+        paragraphs.extend([label + " – Citace ze zdrojů: " + summary + provenance + coverage + omitted_notice, ""])
     if not issue_ids:
         paragraphs.append("Za dané období nebyl k AI shrnutí žádný změněný úkol.")
     else:

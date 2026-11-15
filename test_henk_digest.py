@@ -95,6 +95,31 @@ class HenkDigestTests(unittest.TestCase):
         self.assertIn("Ověřujeme správnou hodnotu.", henk_digest.summarize_private(
             self.path, "https://redmine.example.test", "test", inference=lambda *_: answer))
 
+    def test_period_status_without_comment_does_not_force_false_citation(self):
+        self.issue['journals'][1]['notes'] = ''
+        self.issue['journals'][1]['details'] = [{'property': 'attr', 'name': 'status_id', 'old_value': '1', 'new_value': '2'}]
+        self.store()
+        answer = json.dumps({'summary': 'Dřívější kontrola.', 'source_ids': ['issue:91', 'journal:91:7']}, ensure_ascii=False)
+        result = henk_digest.summarize_private(self.path, 'https://redmine.example.test', 'test', inference=lambda *_: answer)
+        self.assertIn('Dřívější kontrola.', result)
+        self.assertIn('12.11.2026 11:00 UTC', result)
+
+    def test_added_sentence_separator_is_allowed_only_for_exact_source(self):
+        answer = json.dumps({'summary': 'e-Jídelníček SMTP/DKIM. Ověřujeme správnou hodnotu.',
+                             'source_ids': ['issue:91', 'journal:91:9']}, ensure_ascii=False)
+        result = henk_digest.summarize_private(self.path, 'https://redmine.example.test', 'test', inference=lambda *_: answer)
+        self.assertIn('e-Jídelníček SMTP/DKIM. Ověřujeme správnou hodnotu.', result)
+        bad = answer.replace('SMTP/DKIM.', 'SMTP/DKIM funguje.')
+        with self.assertRaises(ValueError):
+            henk_digest.summarize_private(self.path, 'https://redmine.example.test', 'test', inference=lambda *_: bad)
+
+    def test_omitted_source_segments_are_visible(self):
+        answer = json.dumps({'summary': 'Ověřujeme správnou hodnotu.',
+                             'source_ids': ['issue:91', 'journal:91:9'],
+                             'omitted_segments': 2}, ensure_ascii=False)
+        result = henk_digest.summarize_private(self.path, 'https://redmine.example.test', 'test', inference=lambda *_: answer)
+        self.assertIn('Počet částí zdroje, které nelze bezpečně citovat: 2', result)
+
     @staticmethod
     def valid_response(source_ids=None):
         return json.dumps({
