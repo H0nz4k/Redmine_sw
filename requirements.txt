@@ -1,0 +1,2 @@
+# Windows has no system IANA zoneinfo database; Linux uses system tzdata.
+tzdata>=2025.2; sys_platform == "win32"

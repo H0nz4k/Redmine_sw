@@ -1,3 +1,4 @@
+import json
 import os
 import sqlite3
 import stat
@@ -84,7 +85,8 @@ class DigestTests(unittest.TestCase):
         self.assertEqual(len(digest.history(self.connect)), 1)
         self.assertEqual(len([line for line in digest.read_report(self.connect, "2026-11-13").splitlines()
                               if "/issues/42" in line]), 3)
-        self.assertEqual(stat.S_IMODE((digest.REPORT_DIR / "2026-11-13.md").stat().st_mode), 0o600)
+        if os.name != "nt":
+            self.assertEqual(stat.S_IMODE((digest.REPORT_DIR / "2026-11-13.md").stat().st_mode), 0o600)
         with self.connect() as db:
             self.assertEqual(db.execute("SELECT COUNT(*) FROM digest_event_ids").fetchone()[0], 2)
 
@@ -265,8 +267,9 @@ class DigestTests(unittest.TestCase):
         source_dir = digest.REPORT_DIR / "henk-input"
         path = source_dir / "2026-11-13.json"
         self.assertTrue(path.is_file())
-        self.assertEqual(stat.S_IMODE(source_dir.stat().st_mode), 0o700)
-        self.assertEqual(stat.S_IMODE(path.stat().st_mode), 0o600)
+        if os.name != "nt":
+            self.assertEqual(stat.S_IMODE(source_dir.stat().st_mode), 0o700)
+            self.assertEqual(stat.S_IMODE(path.stat().st_mode), 0o600)
         source = json.loads(path.read_text(encoding="utf-8"))
         self.assertEqual(source["purpose"], "local_henk_digest_input_only")
         self.assertEqual(source["issues"][0]["description"], long_description)
@@ -280,6 +283,59 @@ class DigestTests(unittest.TestCase):
         self.assertNotIn("POSLEDNI_VETA_KOMENTARE", report)
         self.assertNotIn(tomorrow_comment, report)
         self.assertNotIn("henk-input", report)
+
+    def test_opt_in_ai_narrative_is_in_report_and_cites_journal(self):
+        journal = [{"id": 11, "created_on": "2026-11-13T14:00:00Z",
+                    "user": {"name": "Petr"}, "notes": "Zkontroloval DNS.", "details": []}]
+        self.issue(91, "2026-11-13T09:00:00Z", "2026-11-13T14:00:00Z", journals=journal)
+        self.details[91]["description"] = "Neodcházejí e-maily."
+        answer = json.dumps({
+            "summary": "E-maily se neodesílaly. Petr zkontroloval DNS. "
+                       "Záznam neprokazuje opravu.",
+            "source_ids": ["issue:91", "journal:91:11"]
+        }, ensure_ascii=False)
+        with patch.dict(os.environ, {"HENK_DIGEST_MODEL": "local-test"}):
+            with patch.object(digest.henk_digest, "_ollama", return_value=answer) as model:
+                self.generate("2026-11-13T16:30:00+00:00")
+                model.assert_called_once()
+        report = digest.read_report(self.connect, "2026-11-13")
+        self.assertIn("## Místní AI shrnutí", report)
+        self.assertIn("Petr zkontroloval DNS", report)
+        self.assertIn("Vytvořeno:", report)
+        self.assertIn("13.11.2026 17:30:00 (Europe/Prague)", report)
+        self.assertIn("journal:91:11", report)
+        self.assertIn("## Co se skutečně řešilo", report)
+
+    def test_model_failure_keeps_factual_report(self):
+        self.issue(92, "2026-11-13T09:00:00Z", "2026-11-13T09:00:00Z")
+        with patch.dict(os.environ, {"HENK_DIGEST_MODEL": "local-test"}):
+            with patch.object(digest.henk_digest, "_ollama", side_effect=OSError("offline")):
+                self.generate("2026-11-13T16:30:00+00:00")
+        report = digest.read_report(self.connect, "2026-11-13")
+        self.assertIn("AI shrnutí není dostupné", report)
+        self.assertIn("## Co přibylo", report)
+        self.assertIn("/issues/92", report)
+        self.assertEqual(len(digest.history(self.connect)), 1)
+
+    def test_failed_retry_retains_and_labels_last_success(self):
+        journal = [{"id": 11, "created_on": "2026-11-13T14:00:00Z",
+                    "user": {"name": "Petr"}, "notes": "Zkontroloval DNS.", "details": []}]
+        self.issue(91, "2026-11-13T09:00:00Z", "2026-11-13T14:00:00Z", journals=journal)
+        answer = json.dumps({"summary": "E-maily se neodesílaly. Petr zkontroloval DNS.",
+                             "source_ids": ["issue:91", "journal:91:11"]}, ensure_ascii=False)
+        with patch.dict(os.environ, {"HENK_DIGEST_MODEL": "local-test"}):
+            with patch.object(digest.henk_digest, "_ollama", return_value=answer):
+                self.generate("2026-11-13T16:30:00+00:00")
+            with patch.object(digest.henk_digest, "_ollama", side_effect=OSError("offline")):
+                self.generate("2026-11-13T16:35:00+00:00")
+        report = digest.read_report(self.connect, "2026-11-13")
+        self.assertIn("AI shrnutí není dostupné", report)
+        self.assertIn("starší výsledek", report)
+        self.assertIn("není aktuálním shrnutím", report)
+        self.assertIn("Petr zkontroloval DNS", report)
+        with self.connect() as db:
+            self.assertEqual(db.execute("SELECT COUNT(*) FROM digest_ai_results").fetchone()[0], 1)
+            self.assertEqual(db.execute("SELECT end_utc FROM digest_ai_results").fetchone()[0], "2026-11-13T16:30:00Z")
 
     def test_access_is_restricted_to_known_archive_dates(self):
         with self.assertRaisesRegex(ValueError, "Neplatné datum"):

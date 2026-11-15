@@ -6,13 +6,15 @@ Lokální webový přehled otevřených úkolů přihlášeného uživatele a pr
 
 ## Verze nasazené aplikace
 
-V hlavičce webu je uvedena **Verze** (z textového souboru `VERSION`) a **sestavení** (desetimístný SHA-256 otisk skutečných souborů `VERSION`, `redmine.py`, `index.html`, `triage.py`, `daily_digest.py`, `denni-prehled.html`, `appearance.css`, `appearance.js` na daném serveru). Tím lze odlišit změny kódu i tam, kde nasazená kopie nemá složku `.git`. Stejné informace jsou v `GET /api/version` a `GET /api/overview` v poli `version`.
+V hlavičce webu je uvedena **Verze** (z textového souboru `VERSION`) a **sestavení** (desetimístný SHA-256 otisk skutečných souborů `VERSION`, `redmine.py`, `index.html`, `triage.py`, `daily_digest.py`, `denni-prehled.html`, `henk_digest.py`, `appearance.css`, `appearance.js` na daném serveru). Tím lze odlišit změny kódu i tam, kde nasazená kopie nemá složku `.git`. Stejné informace jsou v `GET /api/version` a `GET /api/overview` v poli `version`.
 
 Každé další vydání musí aktualizovat `VERSION`; úprava běžících souborů změní také identifikátor sestavení. `0.1.0-dev.1` je první nově zavedené vývojové označení, nikoli tvrzení o dřívějších publikovaných verzích. Větev nebo GitHub PR sama o sobě **neznamená**, že byla nová verze nasazena na HanzHub.
 
 ## Spuštění
 
 Vyžaduje Python 3 a povolené REST API. Nastavte `REDMINE_API_KEY` v chráněné konfiguraci prostředí a spusťte `python redmine.py`. Web naslouchá pouze na `127.0.0.1:4091`; pro vzdálený přístup použijte SSH tunel nebo řádně zabezpečenou integraci. Nepublikujte samotnou službu do sítě: nemá přihlášení. Proměnné: `REDMINE_URL`, `REDMINE_DB`, `SYNC_SECONDS`, `PORT`, `OLLAMA_MODEL`. Databáze obsahuje pracovní údaje, chraňte ji a její zálohy.
+
+Na Windows nainstalujte závislosti `python -m pip install -r requirements.txt`, aby Python měl IANA časová pásma včetně `Europe/Prague`. Pro adresář reportů a SQLite nastavte před použitím citlivých dat soukromý NTFS ACL; `chmod` na Windows není náhradou ACL. Na Linuxu zůstávají adresáře `0700` a soubory `0600`.
 
 Vzhled přehledu lze upravit pod tlačítkem nastavení v hlavičce: velikost písma, tučnost a barevné schéma. Nastavení se ukládá v prohlížeči a používá i mapa a denní přehled. **Stručný přehled** zobrazuje synchronizovaný předmět, stav, přiřazenou osobu, případnou provozovnu a výřez popisu; neověřený návrh i zkrácený text označí. Jde o výpis dat, nikoli o AI shrnutí, historii nebo přílohy.
 
@@ -66,4 +68,14 @@ Ruční generování používá samostatný serverový worker: `POST /api/digest
 
 Kromě stručného Markdown reportu ukládá aplikace do `REDMINE_REPORT_DIR/henk-input/YYYY-MM-DD.json` samostatný neveřejný soubor pro pozdější AI analýzu. Obsahuje úplné aktuální popisy dotčených úkolů a jejich komentáře i journal historii do uzávěrky reportu. Popisy jsou snapshotem v okamžiku načtení a nelze je zaměňovat za historické znění. Podkladový adresář má práva 0700, soubor 0600 a nesmí se veřejně zpřístupňovat ani commitovat do Gitu. Webové API tyto podklady neposkytuje. V samotném reportu zůstává jen stručný výtah s odkazy (nikoli plný obsah).
 
-Tlačítko „Vygenerovat teď“ zobrazuje animovaný indikátor po dobu serverového jobu a po znovunačtení stránky se na již běžící úlohu znovu připojí. **Skutečné inteligentní shrnutí Henkem není zatím implementované**; je uvedené samostatně v issue #7.
+Tlačítko „Vygenerovat teď“ zobrazuje animovaný indikátor po dobu serverového jobu a po znovunačtení stránky se na již běžící úlohu znovu připojí. **Přímé propojení s běžícím agentem Henk ještě není potvrzené.** Od verze 0.1.0-dev.6 je v kódu volitelný lokální AI adaptér, nikoliv doklad jeho nasazení nebo úspěšného provozu.
+
+### Volitelné lokální AI shrnutí (0.1.0-dev.6)
+
+- Aktivace vyžaduje `HENK_DIGEST_MODEL` s názvem již nainstalovaného lokálního modelu a `HENK_DIGEST_LOCAL_ONLY_VERIFIED=1` až po nezávislém ověření, že Ollama ani model neposílají obsah mimo povolený stroj. Bez modelu se zobrazí „AI shrnutí není aktivováno“; bez potvrzení lokálního provozu se volání odmítne. Samotná adresa 127.0.0.1 neprokazuje, že server používá lokální inference; názvy obsahující `cloud` se odmítají, ale nejde o úplnou detekci vzdálených modelů.
+- Adaptér `henk_digest.py` se připojuje jen k Ollamě na `http://127.0.0.1:11434/api/generate`, kterou aplikace používá také pro sumarizaci jednotlivých požadavků. Zda Ollama sama neposílá obsah dál, musí provozovatel ověřit odděleně. Volný shell, root ani nový veřejný API endpoint nevzniká. Vlastní transport běžícího Henk agenta se musí zvlášť ověřit před tím, než lze funkci označit za plně integrovanou s Henkem.
+- Vstupem je výhradně soubor `henk-input/YYYY-MM-DD.json`. Adaptér ověřuje privátní soubor a uzávěrku, nepředává pozdější komentáře ani současný popis a stav, pokud byly změněny po uzávěrce. Limit znaků ovšem neověřuje počet tokenů ani kontextové okno konkrétního modelu: před nasazením je nutné zabránit tichému zkrácení a ověřit úplnost zpracování. Adaptér žádá česky psaný odstavec ke každému dotčenému issue a přijímá pouze existující zdrojová ID (úkol + journal); odkazy konstruuje aplikace, nikoli AI.
+- Zdrojová ID a konzervativní kontrola neznamenají automatický důkaz pravdivosti každé AI věty; výstup je označený jako strojový a ověřitelný v původních úkolech. Kontrola odmítá některé formulace o opravě, ale nelze jí prokázat pravdivost ani zachytit všechny způsoby vyjádření. Při nedostupném či chybném modelu se **neztratí faktický report** a stav AI je viditelně označen jako nedostupný.
+- Testy lze spustit `python -m unittest -v`; používají podvržený model, žádná firemní data ani lokální model se během CI nezpřístupňují. Před produkcí ověřit konkrétní lokální model, latenci, oprávnění a skutečnou identitu Henk runtime. Neslibovat dostupnost na HUBu podle pouhého PR.
+
+Při neúspěšném nebo vypnutém AI generování zůstává faktická kronika a případné poslední úspěšné shrnutí uložené v SQLite. Na stránce je výslovně označeno jako starší a obsahuje původní období i čas vzniku; opakované generování nepřidává další záznam pro tentýž den. Ruční opakování používá existující tlačítko **Vygenerovat teď**; plánování zachovává nastavený čas. Zdrojová ID nejsou důkazem správnosti textu: každou významnou větu musí člověk ověřit vůči uvedenému úkolu a journalům. Modelové výstupy, stejně jako ostatní obsah SQLite, vyžadují chráněný adresář a zálohu.

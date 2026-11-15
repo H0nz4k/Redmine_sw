@@ -4,6 +4,8 @@ import os
 import re
 import threading
 import tempfile
+
+import henk_digest
 from datetime import datetime, time, timedelta, timezone
 from pathlib import Path
 from zoneinfo import ZoneInfo
@@ -28,6 +30,10 @@ def _stamp(value):
     return _utc(value).isoformat().replace("+00:00", "Z")
 
 
+def _display_time(value):
+    return _utc(value).astimezone(TZ).strftime("%d.%m.%Y %H:%M:%S")
+
+
 def _clock(value):
     if not isinstance(value, str) or not re.fullmatch(r"(?:[01]\d|2[0-3]):[0-5]\d", value):
         raise ValueError("Čas musí mít formát HH:MM.")
@@ -39,6 +45,7 @@ def _schema(db):
     db.execute("CREATE TABLE IF NOT EXISTS digest_reports (day TEXT PRIMARY KEY, start_utc TEXT NOT NULL, end_utc TEXT NOT NULL, path TEXT NOT NULL, event_count INTEGER NOT NULL)")
     db.execute("CREATE TABLE IF NOT EXISTS digest_projects (id INTEGER PRIMARY KEY, name TEXT NOT NULL)")
     db.execute("CREATE TABLE IF NOT EXISTS digest_event_ids (id TEXT PRIMARY KEY, occurred_utc TEXT NOT NULL)")
+    db.execute("CREATE TABLE IF NOT EXISTS digest_ai_results (day TEXT PRIMARY KEY, start_utc TEXT NOT NULL, end_utc TEXT NOT NULL, generated_utc TEXT NOT NULL, text TEXT NOT NULL)")
 
 
 def get_settings(connect, now=None):
@@ -297,7 +304,11 @@ def _save_private_henk_source(day, start, end, events, contexts):
             prefix=".digest-", suffix=".tmp", delete=False
         ) as stream:
             temp_path = Path(stream.name)
-            os.fchmod(stream.fileno(), 0o600)
+            if hasattr(os, "fchmod"):
+                os.fchmod(stream.fileno(), 0o600)
+            else:
+                # Windows uses the directory's ACL, not POSIX mode bits.
+                os.chmod(temp_path, 0o600)
             json.dump(payload, stream, ensure_ascii=False, indent=2)
             stream.write("\n")
             stream.flush()
@@ -331,7 +342,41 @@ def generate(connect, issues, request, base, now=None):
         events, current_projects, contexts = _collect(start, end, issues, request, base, projects)
         markdown = _markdown(events, start, end, contexts)
         REPORT_DIR.mkdir(mode=0o700, parents=True, exist_ok=True)
-        _save_private_henk_source(day, start, end, events, contexts)
+        private_source = _save_private_henk_source(day, start, end, events, contexts)
+        model = os.getenv("HENK_DIGEST_MODEL", "").strip()
+        ai_record = None
+        if not model:
+            ai_text = ("## Místní AI shrnutí\n\n"
+                       "AI shrnutí není aktivováno. Zůstává faktický soupis Redminu.")
+        else:
+            try:
+                result_text = henk_digest.summarize_private(private_source, base, model)
+                generated = _stamp(datetime.now(timezone.utc))
+                ai_text = ("## Místní AI shrnutí\n\n"
+                           "Vytvořeno: " + _display_time(generated) + "; období: " + _display_time(start) +
+                           " až " + _display_time(end) + " (Europe/Prague). Podklady jsou omezeny přístupem účtu Redmine.\n\n" +
+                           result_text.split("\n", 1)[1].lstrip())
+                ai_record = (day, _stamp(start), _stamp(end), generated, result_text)
+            except Exception:
+                # The factual daily digest must survive a model outage, invalid
+                # references, oversized input or rejected ungrounded conclusions.
+                ai_text = ("## Místní AI shrnutí\n\n"
+                           "AI shrnutí není dostupné nebo nebylo ověřitelné. "
+                           "Faktický soupis Redminu zůstává zachován.")
+        if ai_record is None:
+            with connect() as db:
+                _schema(db)
+                last_ai = db.execute("SELECT start_utc,end_utc,generated_utc,text FROM digest_ai_results WHERE day<=? ORDER BY generated_utc DESC LIMIT 1", (day,)).fetchone()
+            if last_ai:
+                ai_text += ("\n\n## Poslední úspěšné AI shrnutí – starší výsledek\n\n"
+                            "Tento výsledek není aktuálním shrnutím. Vytvořeno: " + _display_time(last_ai[2]) +
+                            "; období: " + _display_time(last_ai[0]) + " až " + _display_time(last_ai[1]) + " (Europe/Prague).\n\n" +
+                            last_ai[3].split("\n", 1)[1].lstrip())
+        story_heading = "\n## Co se skutečně řešilo"
+        if story_heading in markdown:
+            markdown = markdown.replace(story_heading, "\n" + ai_text + "\n" + story_heading, 1)
+        else:
+            markdown = markdown + "\n" + ai_text + "\n"
         path = REPORT_DIR / (day + ".md")
         temp = REPORT_DIR / (day + ".tmp")
         with temp.open("w", encoding="utf-8") as stream:
@@ -345,6 +390,9 @@ def generate(connect, issues, request, base, now=None):
             db.execute("INSERT INTO digest_reports(day,start_utc,end_utc,path,event_count) VALUES(?,?,?,?,?) "
                        "ON CONFLICT(day) DO UPDATE SET start_utc=excluded.start_utc,end_utc=excluded.end_utc,path=excluded.path,event_count=excluded.event_count",
                        (day, _stamp(start), _stamp(end), str(path), len(events)))
+            if ai_record:
+                db.execute("INSERT INTO digest_ai_results(day,start_utc,end_utc,generated_utc,text) VALUES(?,?,?,?,?) "
+                           "ON CONFLICT(day) DO UPDATE SET start_utc=excluded.start_utc,end_utc=excluded.end_utc,generated_utc=excluded.generated_utc,text=excluded.text", ai_record)
             for event in events:
                 db.execute("INSERT OR IGNORE INTO digest_event_ids(id,occurred_utc) VALUES(?,?)",
                            (event["key"], event["time"]))
