@@ -8,6 +8,7 @@ import tempfile
 import henk_digest
 from datetime import datetime, time, timedelta, timezone
 from pathlib import Path
+from urllib.parse import urlsplit
 from zoneinfo import ZoneInfo
 
 TZ = ZoneInfo("Europe/Prague")
@@ -429,6 +430,73 @@ def read_report(connect, day):
     if not row:
         raise ValueError("Report není dostupný.")
     return (REPORT_DIR / (day + ".md")).read_text(encoding="utf-8")
+
+
+def read_source_excerpts(connect, day, base, limit=600):
+    """Read saved report sources without changing the archive or fetching Redmine."""
+    if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", day or ""):
+        raise ValueError("Neplatné datum reportu.")
+    with connect() as db:
+        _schema(db)
+        row = db.execute("SELECT start_utc,end_utc FROM digest_reports WHERE day=?", (day,)).fetchone()
+    if not row:
+        raise ValueError("Report není dostupný.")
+    path = REPORT_DIR / "henk-input" / (day + ".json")
+    try:
+        with path.open("rb") as stream:
+            raw = stream.read(4 * 1024 * 1024 + 1)
+    except FileNotFoundError:
+        return {"day": day, "available": False, "items": []}
+    if len(raw) > 4 * 1024 * 1024:
+        raise ValueError("Podklady reportu jsou příliš rozsáhlé.")
+    try:
+        source = json.loads(raw)
+        if (not isinstance(source, dict) or source.get("schema_version") != 1
+                or source.get("purpose") != "local_henk_digest_input_only"
+                or source.get("report_day") != day
+                or _utc(source["period_start_utc"]) != _utc(row[0])
+                or _utc(source["period_end_utc"]) != _utc(row[1])):
+            raise ValueError("Nesouhlasí období podkladů reportu.")
+        issues = source["issues"]
+        if not isinstance(issues, list) or len(issues) > 500:
+            raise ValueError("Neplatný počet požadavků.")
+        origin = urlsplit(base)
+        if origin.scheme not in ("http", "https") or not origin.hostname or origin.username or origin.password or origin.query or origin.fragment:
+            raise ValueError("Neplatná adresa Redmine.")
+        start, end = _utc(row[0]), _utc(row[1])
+        items, seen = [], set()
+        for issue in issues:
+            iid = issue["id"]
+            if type(iid) is not int or iid <= 0 or iid in seen:
+                raise ValueError("Neplatný požadavek v podkladech.")
+            seen.add(iid)
+            subject, description, journals = issue.get("subject") or "", issue.get("description") or "", issue.get("journals", [])
+            if not isinstance(subject, str) or not isinstance(description, str) or not isinstance(journals, list):
+                raise ValueError("Neplatný obsah podkladů.")
+            parts = []
+            if description.strip():
+                parts.append({"kind": "description", "text": description.strip()})
+            notes = []
+            for journal in journals:
+                when, note = _utc(journal["created_on"]), journal.get("notes") or ""
+                if not isinstance(note, str):
+                    raise ValueError("Neplatný komentář v podkladech.")
+                if start <= when <= end and note.strip():
+                    notes.append((when, note.strip()))
+            for when, note in sorted(notes, key=lambda pair: pair[0]):
+                parts.append({"kind": "comment", "at": _stamp(when), "text": note})
+            selected, omitted, remaining = [], 0, limit
+            for part in parts:
+                if len(part["text"]) > remaining:
+                    omitted += 1
+                else:
+                    selected.append(part)
+                    remaining -= len(part["text"])
+            items.append({"id": iid, "subject": subject, "url": base.rstrip("/") + "/issues/" + str(iid),
+                          "excerpts": selected, "omitted_parts": omitted})
+        return {"day": day, "available": True, "items": items}
+    except (KeyError, TypeError, UnicodeError, json.JSONDecodeError) as exc:
+        raise ValueError("Podklady reportu nejsou platné.") from exc
 
 
 def pending_cutoffs(connect, now=None, max_days=366):

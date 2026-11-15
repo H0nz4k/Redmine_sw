@@ -541,6 +541,12 @@ class Handler(BaseHTTPRequestHandler):
             self.send({'reports': daily_digest.history(connect)})
         elif self.path == '/api/digest/job':
             self.send(daily_digest.manual_job_status())
+        elif self.path.startswith('/api/digest/excerpts?'):
+            params = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)
+            try:
+                self.send(daily_digest.read_source_excerpts(connect, params.get('day', [''])[0], BASE))
+            except (ValueError, OSError):
+                self.send({'error': 'Výňatky nejsou dostupné.'}, status=404)
         elif self.path.startswith('/api/digest/report?'):
             params = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)
             day = params.get('day', [''])[0]

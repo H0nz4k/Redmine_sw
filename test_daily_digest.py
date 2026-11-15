@@ -298,6 +298,24 @@ class DigestTests(unittest.TestCase):
             self.assertNotIn("/attachments", path.lower())
             self.assertNotIn("attachment", str(params).lower())
 
+    def test_existing_source_excerpts_remain_available(self):
+        journal = [
+            {"id": 1, "created_on": "2026-11-12T14:00:00Z", "user": {"name": "Eva"},
+             "notes": "Starší komentář.", "details": []},
+            {"id": 2, "created_on": "2026-11-13T14:00:00Z", "user": {"name": "Eva"},
+             "notes": "Aktuální komentář.", "details": []},
+        ]
+        self.issue(71, "2026-11-13T09:00:00Z", "2026-11-13T14:00:00Z", journals=journal)
+        self.details[71]["description"] = "Původní text požadavku."
+        self.generate("2026-11-13T16:30:00+00:00")
+        self.calls.clear()
+        result = digest.read_source_excerpts(self.connect, "2026-11-13", "https://redmine.example.test")
+        self.assertTrue(result["available"])
+        self.assertEqual(result["items"][0]["url"], "https://redmine.example.test/issues/71")
+        self.assertEqual([p["text"] for p in result["items"][0]["excerpts"]],
+                         ["Původní text požadavku.", "Aktuální komentář."])
+        self.assertEqual(self.calls, [])
+
     def test_opt_in_ai_narrative_is_in_report_and_cites_journal(self):
         journal = [{"id": 11, "created_on": "2026-11-13T14:00:00Z",
                     "user": {"name": "Petr"}, "notes": "Zkontroloval DNS.", "details": []}]
