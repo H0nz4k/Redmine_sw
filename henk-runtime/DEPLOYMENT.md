@@ -1,6 +1,6 @@
 # Kandidát textového API Henka — nasazení a návrat
 
-**Čeká na schválení:** skutečný syntetický test i cílený izolovaný průchod s čerstvými texty Redmine, Henkem a zobrazením v prohlížeči prošly. Produkční služby nebyly změněny. Tento dokument není souhlasem s nasazením.
+**Nasazeno po souhlasu:** verze Redmine `55385e9` a Henka `ecb7ae5` byla spuštěna; skutečný build je `183ee9f600`. Produkční ruční souhrn 15. 11. 2026 pokryl dva požadavky, jejich citace byly nezávisle porovnány se zdroji a zobrazení v prohlížeči prošlo. Všechny tři služby jsou aktivní, plán zůstal 17:30; další plánované spuštění se zatím neuskutečnilo. Tento dokument obsahuje také postup návratu.
 
 ## Přístup a konfigurace
 
