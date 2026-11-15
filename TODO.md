@@ -30,7 +30,7 @@ První implementační větev `feature/helpdesk-triage`: lokální konzervativn�
 - [ ] Nad soupisem zobrazovat slovní kroniku z popisů bugů a komentářů, s uvedením autorů a odkazy. První implementace ve větvi feature/digest-narrative, produkčně ověřit.
 - [ ] U každé důležité události uvést člověka, projekt a klikací odkaz na původní záznam.
 - [ ] Zprávu automaticky ukládat v aplikaci včetně historie a ručního spuštění, bez duplicit a bez ztrát při výpadku.
-- [ ] Napojit Henka na privátní denní podklady pro skutečné AI shrnutí problémů a řešení, viz [issue #7](https://github.com/H0nz4k/Redmine_sw/issues/7). Dnes se jen ukládají vstupy, Henk dosud souhrny netvoří.
+- [ ] Dokončit přímé propojení s **ověřeným běžícím Henk runtime**, nasadit a změřit lokální model. Od `0.1.0-dev.6` existuje opt-in adaptér pro lokální Ollamu a souhrn z privátních podkladů se zdrojovými ID; **vývojový kód není důkazem, že Henk na HUBu již report vytváří**. Viz [issue #7](https://github.com/H0nz4k/Redmine_sw/issues/7).
 - [ ] Později zvážit upozornění a možnost přečtení zprávy Henkem nahlas.
 
 **Nejde o filtr mých úkolů ani Helpdesku:** cílem je přehled o dění v celé firmě. Podrobné zadání: https://github.com/H0nz4k/Redmine_sw/issues/3
