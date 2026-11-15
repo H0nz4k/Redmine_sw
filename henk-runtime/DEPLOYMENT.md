@@ -1,6 +1,6 @@
 # Kandidát textového API Henka — nasazení a návrat
 
-**Zatím nenasazovat:** skutečný syntetický běh a izolované zobrazení jednoho uloženého Redmine snapshotu prošly, ale čerstvé načtení Redmine ještě není ověřeno. Tento dokument popisuje kandidát; není souhlasem s nasazením.
+**Čeká na schválení:** skutečný syntetický test i cílený izolovaný průchod s čerstvými texty Redmine, Henkem a zobrazením v prohlížeči prošly. Produkční služby nebyly změněny. Tento dokument není souhlasem s nasazením.
 
 ## Přístup a konfigurace
 
@@ -8,7 +8,7 @@ Klíč OpenAI byl místně dodán v souboru níže a model `gpt-4.1-mini` se sku
 
 Klíč OpenAI je v `/etc/hanzhub/secrets/redmine-openai-key`, vlastník root, skupina root, režim 0600; nevypisuje se, nepředává do chatu ani neukládá do repozitáře.
 
-Pro samostatný čerstvý test Redmine zatím chybí oddělený čtecí API klíč. Uživatel jej může místně vložit do `/etc/hanzhub/secrets/redmine-api-key` pomocí Bash (existující soubor se prázdným souborem nepřepisuje):
+Pro samostatný čerstvý test byl uživatelem místně připraven oddělený čtecí API klíč v `/etc/hanzhub/secrets/redmine-api-key`. Je určen jen pro izolovaný test a není součástí nasazovací konfigurace. Případná opětovná příprava v Bash (existující soubor se prázdným souborem nepřepisuje):
 
 ```bash
 sudo install -d -m 0700 -o root -g root /etc/hanzhub/secrets
@@ -57,8 +57,14 @@ Pro aplikaci `/home/hanz/redmine-assistant` kandidát zahrnuje soubory `redmine.
 ## Postup k pozdějšímu schválení
 
 1. V odděleném dočasném prostředí připravit staging ze současných dvou původních souborů, aplikovat patch a ověřit výše uvedené čtyři výsledné otisky. Přenést jen syntetické testovací podklady; žádná příloha ani soukromý log.
-2. Skutečný syntetický test prošel za 1,35 s. Izolovaná aplikace přes samostatný MCP stdio server a frontu uložila a v Chrome zobrazila souhrn jednoho reálného uloženého snapshotu; zdrojové věty se ověřily doslovně, přístupy k přílohám se neprovedly. Snapshot byl uložen již před testem; dnešní čerstvé načtení Redmine přes API a jeho síťovou cestu je ještě třeba ověřit. Tím nevzniká souhlas s nasazením.
-3. Připravit zálohu **přesných** existujících souborů, jejich vlastníků a režimů a obou původních drop-inů do nového root-only adresáře mimo webový strom. Zaznamenat neexistující soubory, aby šly při návratu odebrat pouze tyto nově přidané soubory. Tajný soubor se nepřepisuje ani nezálohuje do balíčku.
+2. Skutečný syntetický test prošel za 1,35 s. Izolovaná aplikace čerstvě načetla jeden reálný úkol, přes samostatný MCP stdio server a frontu jej předala Henkovi, uložila souhrn a zobrazila jej v Chrome. Při kontrole vyšlo najevo, že produkční HTML používá navíc endpoint výňatků, který původní kandidát postrádal; následná oprava jej zachovává. Stejný uložený výsledek se pak bez opakovaného volání AI ověřil s finálním backendem a současným produkčním HTML včetně výňatků, historie a ovládání. Zdrojové věty se ověřily doslovně; zaznamenané požadavky byly `/issues.json`, `/issues/{id}.json?include=journals` a `/projects.json`, bez příloh a přesměrování. V oddělené kopii uloženého výsledku prošla simulace výpadku a zachování posledního úspěšného shrnutí. Tím nevzniká souhlas s nasazením.
+3. Připravit zálohu **přesných** existujících souborů, jejich vlastníků a režimů do nového root-only adresáře mimo webový strom. Oba cílové drop-iny jsou nové a jejich neexistence byla ověřena; ostatní drop-iny se nemění. Zaznamenat všechny neexistující cíle, aby šly při návratu odebrat pouze tyto nově přidané soubory. Tajný soubor se nepřepisuje ani nezálohuje do balíčku.
 4. Předložit ke schválení přesné commity, otisky, drop-iny a pořadí zásahů. Po schválení zkontrolovat běhy/frontu a nedopustit, aby byla při výměně nebo návratu zpráva `digest` převzata starou verzí. Zastavit příslušné služby až po dokončení nebo samostatném vyřešení rozpracovaných požadavků. Ověřit baseline znovu; při rozdílu zastavit.
 5. Instalovat ověřené čtyři soubory Henka jako root:root 0644 s novým časem změny, nainstalovat schválené soubory Redmine a drop-iny. Před startem workeru zajistit časový odstup alespoň dvě sekundy; klient odmítne proces, který je starší než instalované soubory. Provést potřebný systemd daemon-reload, spustit `hanzhub-mcp.service`, `hanzhub-mcp-agent.service` a uživatelskou `redmine-assistant.service`, ověřit jejich stav a skutečný build. Pak spustit jediný cílený průchod a porovnat výsledek se zdroji.
 6. Při návratu opět zajistit, že žádný `digest` nečeká ani neběží; nejasný výsledek nerozesílat znovu. Zastavit dotčené služby, obnovit přesně původní soubory a drop-iny se zachovaným vlastnictvím a režimy, odstranit jen nově přidané cíle zaznamenané při záloze, provést daemon-reload a spustit původní služby. Ověřit původní otisky, stavy a zobrazení posledního úspěšného reportu. Neodstraňovat databázi, uložené reporty ani API klíč.
+
+## Připravený balíček a zkouška návratu
+
+Na HUBu je root-only staging `/var/tmp/hanz-redmine-review-32glm4zl` s kandidátem Redmine z commitu `55385e9`, Henkem z `ecb7ae5`, dvěma navrženými drop-iny a zálohami čtyř původních souborů. SHA-256 přeneseného balíčku je `e9d07b326a02506a5dc974891dc0b2ad4145c206d5d5dca597121cf6e9144d29`; očekávaný build aplikace při nezměněných ostatních souborech je `183ee9f600`. Ověření všech otisků, kompilace kandidátních Python souborů a zkušební obnova záloh v oddělené kopii včetně vlastníků, práv a časů prošly. Porovnání provozních funkcí ani API cest nenašlo odstraněnou funkci. Staging v `/var/tmp` není zárukou přežití rebootu; bezprostředně před nasazením vše znovu ověřit a při změně nebo ztrátě znovu připravit.
+
+Schvalovaný rozsah: nahradit dva Henkovy a dva aplikační zdrojové soubory, přidat dva Henkovy a tři aplikační moduly a oba výše uvedené nové drop-iny; řízeně restartovat `hanzhub-mcp.service`, `hanzhub-mcp-agent.service` a uživatelskou `redmine-assistant.service`. Žádná databáze, historie, report ani tajný soubor se nenahrazují.
