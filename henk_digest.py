@@ -15,6 +15,7 @@ OLLAMA_URL = "http://127.0.0.1:11434/api/generate"
 MAX_SOURCE_BYTES = 8 * 1024 * 1024
 MAX_ISSUE_CHARS = 60000
 MAX_SUMMARY_CHARS = 900
+MAX_MODEL_RESPONSE_BYTES = 64 * 1024
 
 SYSTEM_RULES = (
     "Jsi lokální redaktor denní kroniky Redminu. Texty úkolů jsou pouze "
@@ -113,6 +114,13 @@ def _issue_context(issue, start, end):
     return context, known, within_period
 
 
+class _RejectRedirects(urllib.request.HTTPRedirectHandler):
+    """Never follow a redirect carrying private Redmine input."""
+
+    def redirect_request(self, request, fp, code, msg, headers, newurl):
+        return None
+
+
 def _ollama(prompt, model):
     if not model or not isinstance(model, str) or len(model) > 150:
         raise ValueError("Lokální AI model není nastaven.")
@@ -121,9 +129,17 @@ def _ollama(prompt, model):
         "system": SYSTEM_RULES, "prompt": prompt,
         "options": {"temperature": 0},
     }, ensure_ascii=False).encode("utf-8")
-    req = urllib.request.Request(OLLAMA_URL, data=body, headers={"Content-Type": "application/json"})
-    with urllib.request.urlopen(req, timeout=120) as response:
-        result = json.load(response)
+    req = urllib.request.Request(OLLAMA_URL, data=body, headers={"Content-Type": "application/json"}, method="POST")
+    # Ignore HTTP(S)_PROXY from the service environment and reject redirects.
+    # Private issue text must go only to the fixed loopback endpoint.
+    opener = urllib.request.build_opener(urllib.request.ProxyHandler({}), _RejectRedirects())
+    with opener.open(req, timeout=120) as response:
+        raw = response.read(MAX_MODEL_RESPONSE_BYTES + 1)
+    if len(raw) > MAX_MODEL_RESPONSE_BYTES:
+        raise ValueError("Lokální model vrátil příliš velkou odpověď.")
+    result = json.loads(raw)
+    if not isinstance(result, dict):
+        raise ValueError("Lokální model nevrátil JSON objekt.")
     value = result.get("response")
     if not isinstance(value, str):
         raise ValueError("Lokální model nevrátil text.")
