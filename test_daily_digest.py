@@ -1,3 +1,4 @@
+import json
 import os
 import sqlite3
 import stat
@@ -270,6 +271,37 @@ class DigestTests(unittest.TestCase):
         self.assertNotIn("POSLEDNI_VETA_KOMENTARE", report)
         self.assertNotIn(tomorrow_comment, report)
         self.assertNotIn("henk-input", report)
+
+    def test_opt_in_ai_narrative_is_in_report_and_cites_journal(self):
+        journal = [{"id": 11, "created_on": "2026-11-13T14:00:00Z",
+                    "user": {"name": "Petr"}, "notes": "Zkontroloval DNS.", "details": []}]
+        self.issue(91, "2026-11-13T09:00:00Z", "2026-11-13T14:00:00Z", journals=journal)
+        self.details[91]["description"] = "Neodcházejí e-maily."
+        answer = json.dumps({
+            "summary": "E-maily se neodesílaly. Petr zkontroloval DNS. "
+                       "Záznam neprokazuje opravu.",
+            "source_ids": ["issue:91", "journal:91:11"]
+        }, ensure_ascii=False)
+        with patch.dict(os.environ, {"HENK_DIGEST_MODEL": "local-test"}):
+            with patch.object(digest.henk_digest, "_ollama", return_value=answer) as model:
+                self.generate("2026-11-13T16:30:00+00:00")
+                model.assert_called_once()
+        report = digest.read_report(self.connect, "2026-11-13")
+        self.assertIn("## Henk – inteligentní shrnutí", report)
+        self.assertIn("Petr zkontroloval DNS", report)
+        self.assertIn("journal:91:11", report)
+        self.assertIn("## Co se skutečně řešilo", report)
+
+    def test_model_failure_keeps_factual_report(self):
+        self.issue(92, "2026-11-13T09:00:00Z", "2026-11-13T09:00:00Z")
+        with patch.dict(os.environ, {"HENK_DIGEST_MODEL": "local-test"}):
+            with patch.object(digest.henk_digest, "_ollama", side_effect=OSError("offline")):
+                self.generate("2026-11-13T16:30:00+00:00")
+        report = digest.read_report(self.connect, "2026-11-13")
+        self.assertIn("AI shrnutí není dostupné", report)
+        self.assertIn("## Co přibylo", report)
+        self.assertIn("/issues/92", report)
+        self.assertEqual(len(digest.history(self.connect)), 1)
 
     def test_access_is_restricted_to_known_archive_dates(self):
         with self.assertRaisesRegex(ValueError, "Neplatné datum"):

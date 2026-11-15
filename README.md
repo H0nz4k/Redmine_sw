@@ -64,4 +64,13 @@ Ruční generování používá samostatný serverový worker: `POST /api/digest
 
 Kromě stručného Markdown reportu ukládá aplikace do `REDMINE_REPORT_DIR/henk-input/YYYY-MM-DD.json` samostatný neveřejný soubor pro pozdější AI analýzu. Obsahuje úplné aktuální popisy dotčených úkolů a jejich komentáře i journal historii do uzávěrky reportu. Popisy jsou snapshotem v okamžiku načtení a nelze je zaměňovat za historické znění. Podkladový adresář má práva 0700, soubor 0600 a nesmí se veřejně zpřístupňovat ani commitovat do Gitu. Webové API tyto podklady neposkytuje. V samotném reportu zůstává jen stručný výtah s odkazy (nikoli plný obsah).
 
-Tlačítko „Vygenerovat teď“ zobrazuje animovaný indikátor po dobu serverového jobu a po znovunačtení stránky se na již běžící úlohu znovu připojí. **Skutečné inteligentní shrnutí Henkem není zatím implementované**; je uvedené samostatně v issue #7.
+Tlačítko „Vygenerovat teď“ zobrazuje animovaný indikátor po dobu serverového jobu a po znovunačtení stránky se na již běžící úlohu znovu připojí. **Přímé propojení s běžícím agentem Henk ještě není potvrzené.** Od verze 0.1.0-dev.6 je v kódu volitelný lokální AI adaptér, nikoliv doklad jeho nasazení nebo úspěšného provozu.
+
+### Volitelné lokální AI shrnutí (0.1.0-dev.6)
+
+- Aktivace je výslovná: nastavit `HENK_DIGEST_MODEL` na název **již nainstalovaného lokálního modelu Ollama**. Bez této proměnné se žádný model nespustí a v reportu bude uvedeno „AI shrnutí není aktivováno“.
+- Adaptér `henk_digest.py` používá **jen** existující lokální transport Ollama `http://127.0.0.1:11434/api/generate`, který aplikace používá také pro sumarizaci jednotlivých požadavků. Žádný externí endpoint, volný shell, root ani nový veřejný API endpoint nevzniká. Vlastní transport běžícího Henk agenta se musí zvlášť ověřit před tím, než lze funkci označit za plně integrovanou s Henkem.
+- Vstupem je výhradně soubor `henk-input/YYYY-MM-DD.json` s oprávněními 0600. Adaptér ověřuje privátní soubor a uzávěrku, nepředává pozdější komentáře ani současný popis a stav, pokud byly změněny po uzávěrce; nepřesahuje omezený kontext modelu mlčenlivým krácením. Vytváří česky psaný odstavec ke každému dotčenému issue a přijímá pouze existující zdrojová ID (úkol + journal); odkazy konstruuje aplikace, nikoli AI.
+- Zdrojová ID a konzervativní kontrola neznamenají automatický důkaz pravdivosti každé AI věty; výstup je označený jako strojový a ověřitelný v původních úkolech. Nepodložené formulace o opravě se odmítají. Při nedostupném či chybném modelu se **neztratí faktický report** a stav AI je viditelně označen jako nedostupný.
+- Testy lze spustit `python -m unittest -v`; používají podvržený model, žádná firemní data ani lokální model se během CI nezpřístupňují. Před produkcí ověřit konkrétní lokální model, latenci, oprávnění a skutečnou identitu Henk runtime. Neslibovat dostupnost na HUBu podle pouhého PR.
+

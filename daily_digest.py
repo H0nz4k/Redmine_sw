@@ -4,6 +4,8 @@ import os
 import re
 import threading
 import tempfile
+
+import henk_digest
 from datetime import datetime, time, timedelta, timezone
 from pathlib import Path
 from zoneinfo import ZoneInfo
@@ -329,7 +331,25 @@ def generate(connect, issues, request, base, now=None):
         events, current_projects, contexts = _collect(start, end, issues, request, base, projects)
         markdown = _markdown(events, start, end, contexts)
         REPORT_DIR.mkdir(mode=0o700, parents=True, exist_ok=True)
-        _save_private_henk_source(day, start, end, events, contexts)
+        private_source = _save_private_henk_source(day, start, end, events, contexts)
+        model = os.getenv("HENK_DIGEST_MODEL", "").strip()
+        if not model:
+            ai_text = ("## Henk – inteligentní shrnutí\n\n"
+                       "AI shrnutí není aktivováno. Zůstává faktický soupis Redminu.")
+        else:
+            try:
+                ai_text = henk_digest.summarize_private(private_source, base, model)
+            except Exception:
+                # The factual daily digest must survive a model outage, invalid
+                # references, oversized input or rejected ungrounded conclusions.
+                ai_text = ("## Henk – inteligentní shrnutí\n\n"
+                           "AI shrnutí není dostupné nebo nebylo ověřitelné. "
+                           "Faktický soupis Redminu zůstává zachován.")
+        story_heading = "\n## Co se skutečně řešilo"
+        if story_heading in markdown:
+            markdown = markdown.replace(story_heading, "\n" + ai_text + "\n" + story_heading, 1)
+        else:
+            markdown = markdown + "\n" + ai_text + "\n"
         path = REPORT_DIR / (day + ".md")
         temp = REPORT_DIR / (day + ".tmp")
         with temp.open("w", encoding="utf-8") as stream:
