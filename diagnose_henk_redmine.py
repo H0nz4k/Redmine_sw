@@ -20,11 +20,17 @@ PROBES = (
 TIMEOUT_SECONDS = 2.0
 
 
+class _RejectRedirects(urllib.request.HTTPRedirectHandler):
+    """A misconfigured local route must not redirect the probe elsewhere."""
+    def redirect_request(self, request, fp, code, msg, headers, newurl):
+        return None
+
+
 def probe(url, opener=None):
     """Check ONLY the fixed allowlisted GET route, without reading its body."""
     if url not in {target for _, target in PROBES}:
         raise ValueError("Endpoint is not on the read-only diagnostic allowlist.")
-    opener = opener or urllib.request.build_opener(urllib.request.ProxyHandler({}))
+    opener = opener or urllib.request.build_opener(urllib.request.ProxyHandler({}), _RejectRedirects())
     request = urllib.request.Request(url, headers={"Accept": "application/json"}, method="GET")
     try:
         with opener.open(request, timeout=TIMEOUT_SECONDS) as response:
