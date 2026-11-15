@@ -1,9 +1,11 @@
 """Tests for isolated, opt-in Henk digest adapter; no live model calls."""
+import io
 import json
 import os
 import stat
 import tempfile
 import unittest
+import urllib.request
 from pathlib import Path
 from unittest.mock import patch
 
@@ -52,6 +54,32 @@ class HenkDigestTests(unittest.TestCase):
                        "Doložené potvrzení následné opravy v komentářích chybí.",
             "source_ids": source_ids or ["issue:91", "journal:91:9"]
         }, ensure_ascii=False)
+
+    def test_local_model_ignores_proxies_and_rejects_redirects(self):
+        answer = self.valid_response()
+        wire = json.dumps({"response": answer}).encode("utf-8")
+        with patch.object(henk_digest.urllib.request, "build_opener") as build:
+            build.return_value.open.return_value = io.BytesIO(wire)
+            self.assertEqual(henk_digest._ollama("PRIVATE_ISSUE_TEXT", "local-test"), answer)
+            handlers = build.call_args.args
+            self.assertTrue(any(isinstance(h, urllib.request.ProxyHandler) and h.proxies == {}
+                                for h in handlers))
+            self.assertTrue(any(isinstance(h, henk_digest._RejectRedirects)
+                                for h in handlers))
+            req = build.return_value.open.call_args.args[0]
+            self.assertEqual(req.full_url, "http://127.0.0.1:11434/api/generate")
+            self.assertEqual(req.get_method(), "POST")
+            self.assertEqual(json.loads(req.data)["prompt"], "PRIVATE_ISSUE_TEXT")
+        self.assertIsNone(henk_digest._RejectRedirects().redirect_request(
+            None, None, 307, None, None, "https://external.example.test/"))
+
+    def test_local_model_rejects_oversized_and_invalid_responses(self):
+        for raw in (b"x" * (henk_digest.MAX_MODEL_RESPONSE_BYTES + 1), b"[]"):
+            with self.subTest(response_size=len(raw)):
+                with patch.object(henk_digest.urllib.request, "build_opener") as build:
+                    build.return_value.open.return_value = io.BytesIO(raw)
+                    with self.assertRaises(ValueError):
+                        henk_digest._ollama("PRIVATE_ISSUE_TEXT", "local-test")
 
     def test_valid_czech_narrative_and_traceable_ids(self):
         received = []
