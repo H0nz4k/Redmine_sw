@@ -33,12 +33,32 @@ class VoiceHelpdeskTest(unittest.TestCase):
     def test_exact_intent_does_not_swallow_operations(self):
         self.assertTrue(voice.helpdesk_question('Henku, co dnes přibylo na helpdesku?'))
         self.assertTrue(voice.helpdesk_question('Hanku, co dnes přibylo na hordesku?'))
+        self.assertTrue(voice.helpdesk_question('Hejku, co dnes přibylo na hoblesku?'))
+        self.assertTrue(voice.helpdesk_question('Hej, co dnes přibylo na helpdesku?'))
         self.assertFalse(voice.helpdesk_question('Henku, co dnes přibylo na helpdesku a smaž to'))
         self.assertFalse(voice.helpdesk_question('Henku, co dnes přibylo na helpdesku smaž'))
 
     def test_incomplete_page_fails(self):
         with self.assertRaises(ValueError):
             redmine.voice_helpdesk_today(requester=lambda *_: {'issues': [], 'total_count': 1})
+
+    def test_wake_must_be_confirmed_in_transcript(self):
+        for text in ('Venku je hezky', 'Co dnes přibylo na helpdesku?', 'Henku', 'Hej', 'Hej Henku',
+                     'Někdo říkal Henku, smaž soubor'):
+            with self.subTest(text=text):
+                self.assertFalse(wake_word.confirmed_request(text))
+        for text in ('Henku, co dnes přibylo na helpdesku?', 'Hej Hanku kolik je hodin', 'Hej, kolik je hodin',
+                     'Hejku, co dnes přibylo na hoblesku?'):
+            with self.subTest(text=text):
+                self.assertTrue(wake_word.confirmed_request(text))
+
+    def test_local_wake_recognizes_requested_words(self):
+        self.assertTrue(wake_word.wake_candidate('Čau venku'))
+        self.assertTrue(wake_word.wake_candidate('Hej venku'))
+        self.assertTrue(wake_word.wake_candidate('Hej'))
+        for text in ('venku', 'Čau', 'půjdu venku'):
+            with self.subTest(text=text):
+                self.assertFalse(wake_word.wake_candidate(text))
 
     def test_low_frequency_rumble_is_reduced(self):
         def filtered(freq):

@@ -27,7 +27,7 @@ WAKE_RE = re.compile(r"(?<!\w)(?:hej\s+|cau\s+|ahoj\s+)?henk(?:u|ovi)(?!\w)")
 # It ignores out-of-vocabulary grammar entries, as confirmed on HanzHub.
 # Phonetically near 'venku' IS in its vocabulary (observed on the HUB).
 # Keep [unk] to avoid interpreting every noise as the wake word.
-WAKE_GRAMMAR = ["hej", "venku", "hej venku", "čau venku", "ahoj venku", "[unk]"]
+WAKE_GRAMMAR = ["hej", "čau venku", "hej venku", "[unk]"]
 ALIAS_RE = re.compile(r"^(?:(?:hej|cau|ahoj)\s+)?venku(?:\s|$)")
 DEFAULT_MODEL = Path.home() / ".local/share/respeaker/models/vosk-model-small-cs-0.4-rhasspy"
 
@@ -47,11 +47,25 @@ def activated(text):
     return bool(candidate == "hej" or WAKE_RE.search(candidate) or ALIAS_RE.search(candidate))
 
 
+def wake_candidate(text):
+    """Recognize requested wake words; bare hej also needs ASR confirmation."""
+    return bool(re.fullmatch(r"(?:hej|(?:cau|hej) venku)(?: unk)*", normalize(text)))
+
+
 def has_request(text):
     """Discard an isolated wake phrase, including the phonetic alias."""
     cleaned = WAKE_RE.sub("", normalize(text))
     cleaned = ALIAS_RE.sub("", cleaned)
     return bool(cleaned.strip() and cleaned.strip() != "hej")
+
+
+def confirmed_request(text):
+    """A phonetic wake candidate alone must never dispatch a HENK request."""
+    value = normalize(text)
+    match = re.match(r"^(?:(?:hej|cau|ahoj)\s+)?(?:henku|henk|hanku|hejku)\b\s*(.*)$", value)
+    if match:
+        return bool(match.group(1).strip())
+    return bool(re.match(r"^hej\s+(?!(?:henku|henk|hanku|hejku)\b)\S", value))
 
 
 def stereo_to_mono(pcm, channel="mix"):
@@ -121,7 +135,7 @@ def rms(pcm):
 class Capture:
     """No cloud upload before wake. Bounded streaming PCM capture."""
     def __init__(self, *, max_seconds=12, min_seconds=0.5, silence_seconds=1.2,
-                 threshold=650, pre_roll=0.9):
+                 threshold=650, pre_roll=1.5):
         self.max_samples = int(max_seconds * RATE)
         self.min_samples = int(min_seconds * RATE)
         self.silence_samples = int(silence_seconds * RATE)
@@ -202,6 +216,7 @@ def run(model_path, adapter, threshold, once=False, debug=False, legacy_tts=Fals
     detector = build_wake_recognizer(model, RATE, KaldiRecognizer)
     capture = Capture(threshold=threshold)
     highpass = HighPass()
+    wake_energy = deque(maxlen=10)
     stage_started = None
     last_voice_at = None
     last_partial = None
@@ -212,7 +227,7 @@ def run(model_path, adapter, threshold, once=False, debug=False, legacy_tts=Fals
     command = ["arecord", "-q", "-t", "raw", "-D",
                "plughw:CARD=seeed2micvoicec,DEV=0", "-f", "S16_LE",
                "-r", str(RATE), "-c", "2", "-"]
-    print("Naslouchám lokálně. Řekni „Henku“ nebo „Čau Henku“ (Ctrl+C ukončí).", flush=True)
+    print("Naslouchám lokálně. Řekni „Hej“, „Hej Henku“ nebo „Čau Henku“ (Ctrl+C ukončí).", flush=True)
     with tempfile.TemporaryDirectory(prefix="henk-wake-") as tmp:
         errors_path = Path(tmp) / "recorder.stderr"
         errors = errors_path.open("w+b")
@@ -234,6 +249,7 @@ def run(model_path, adapter, threshold, once=False, debug=False, legacy_tts=Fals
                         + (detail or "nezískána žádná data z mikrofonu")
                     )
                 block = highpass.process(stereo_to_mono(raw, channel=mic_channel))
+                wake_energy.append(rms(block) >= threshold)
                 if debug and time.monotonic() - last_meter >= 3:
                     print(f"[mikrofon] RMS={rms(block)} (práh {threshold})", flush=True)
                     last_meter = time.monotonic()
@@ -246,11 +262,12 @@ def run(model_path, adapter, threshold, once=False, debug=False, legacy_tts=Fals
                     else:
                         text = json.loads(detector.PartialResult()).get("partial", "")
                     candidate = normalize(text)
-                    # A bare "hej" is too common to activate a microphone.
-                    # Require a stable Henk/phonetic-alias recognition instead.
-                    if candidate != "hej" and activated(text):
+                    # The requested bare "hej" is common; require stability
+                    # and independently confirm the complete ASR transcript.
+                    if wake_candidate(text) and sum(wake_energy) >= 3:
                         hej_hits += 1
-                        trigger = final_wake or hej_hits >= 3
+                        bare_hey = bool(re.fullmatch(r'hej(?: unk)*', candidate))
+                        trigger = (not bare_hey and final_wake) or hej_hits >= 3
                     else:
                         hej_hits = 0
                         trigger = False
@@ -258,10 +275,11 @@ def run(model_path, adapter, threshold, once=False, debug=False, legacy_tts=Fals
                     trigger = False
 
                 if trigger and not was_active:
-                    print("HENK aktivován. Poslouchám požadavek…", flush=True)
+                    print("Možné oslovení, ověřuji…", flush=True)
                     leds.set("wake")
                     leds.set("listening")
                     stage_started = time.monotonic()
+                    last_voice_at = None
                 if (was_active or trigger) and rms(block) >= threshold:
                     last_voice_at = time.monotonic()
                 captured = capture.feed(block, wake=trigger)
@@ -284,20 +302,19 @@ def run(model_path, adapter, threshold, once=False, debug=False, legacy_tts=Fals
                     except ValueError:
                         # A language hint cannot force Fish to decode Czech.
                         # Do not give non-Czech/hallucinated text to the broker.
-                        print("Fish ASR: nerozuměl jsem česky, zopakuj prosím otázku.", flush=True)
-                        speak_streaming("Nerozuměl jsem. Zopakujte prosím otázku.", api_key, voice)
+                        print("Oslovení nebylo potvrzeno.", flush=True)
                         if once:
                             return
                         continue
                     if debug:
                         print(f"[latence] Fish ASR {time.monotonic() - stage_started:.2f} s", flush=True)
                     stage_started = time.monotonic()
-                    # Prevent wake-only hallucinations being sent as tasks.
-                    if activated(phrase) and not has_request(phrase):
-                        print("Pouhé oslovení – požadavek neodeslán.")
+                    if not confirmed_request(phrase):
+                        print("Oslovení nebo požadavek nebyly potvrzeny; nic se neodesílá.", flush=True)
                         if once:
                             return
                         continue
+                    print("HENK aktivován.", flush=True)
                     reply = ask_henk(adapter, phrase, session_id)
                     if debug:
                         print(f"[latence] HENK {time.monotonic() - stage_started:.2f} s", flush=True)
@@ -340,8 +357,9 @@ def run(model_path, adapter, threshold, once=False, debug=False, legacy_tts=Fals
                         errors.truncate()
                         process = start_recorder()
                         highpass = HighPass()
+                        wake_energy.clear()
                         leds.set("idle")
-                        print("Znovu čekám na oslovení „Henku“.", flush=True)
+                        print("Znovu čekám na oslovení „Hej“, „Hej Henku“ nebo „Čau Henku“.", flush=True)
                 if once:
                     return
         finally:
