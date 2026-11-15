@@ -1,5 +1,7 @@
 # Hlas Henka: kandidát, nikoli nasazená služba
 
+**Stav 15. 11. 2026:** schválený kandidát `8f5965a` byl nasazen a po opakovaných nechtěných aktivacích a uživatelem potvrzené nesprávné hlasové odpovědi vrácen. Obnovení souborů, Redmine, historie a původního stavu služeb prošlo; podrobnosti jsou v `AI_HANDOFF.md`. Opětovné nasazení stejného kandidáta se nedoporučuje. Následná malá změna kandidáta mění pouze barvu stavu zpracování ze žluté na fialovou, což uživatel fyzicky potvrdil; dosud není nasazena. Skutečná návaznost běžné konverzace potřebuje novější podporu vlákna v inboxu a samostatné ověření.
+
 Základ hlasového kódu je ReSpeaker `fde55d8d80b2f7844afb56a3be34868414aa7479`. Soubory `wake_word.py`, `voice_bridge.py`, `led_status.py` a `helpdesk_voice_adapter.py` v tomto adresáři jsou kandidát pro `/home/hanz/ReSpeaker/src/`; `redmine.py` v kořeni je kandidát pro `/home/hanz/redmine-assistant/redmine.py`. Hlasový adaptér dotazuje jen lokální soukromý socket Redmine a ostatní věty předává existujícímu `henk_local_adapter.py`. Socket přijímá pouze vlastní UID, data získává přímo ze seznamu Redmine se všemi stavy; přílohy ani detaily úkolů nenačítá. Odpověď do Fish obsahuje redigované předměty nejvýše pěti požadavků a počet zbývajících. Omezení ASR a neshoda otázky vyžadují skutečný hlasový test; obecné otázky vyžadují funkční existující inbox.
 
 ## Navrhovaný rozsah po samostatném schválení

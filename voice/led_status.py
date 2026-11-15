@@ -13,7 +13,7 @@ STATE_COLORS = {
     "idle": ("green", 3),
     "wake": ("green", 3),
     "listening": ("green", 3),
-    "thinking": ("yellow", 4),
+    "thinking": ("purple", 4),
     "speaking": ("cyan", 3),
     "success": ("green", 5),
     "error": ("red", 5),
