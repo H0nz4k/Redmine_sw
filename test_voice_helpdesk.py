@@ -35,6 +35,7 @@ class VoiceHelpdeskTest(unittest.TestCase):
         self.assertTrue(voice.helpdesk_question('Hanku, co dnes přibylo na hordesku?'))
         self.assertTrue(voice.helpdesk_question('Hejku, co dnes přibylo na hoblesku?'))
         self.assertTrue(voice.helpdesk_question('Hej, co dnes přibylo na helpdesku?'))
+        self.assertTrue(voice.helpdesk_question('Henku, co těs přiblo na helpdesku?'))
         self.assertFalse(voice.helpdesk_question('Henku, co dnes přibylo na helpdesku a smaž to'))
         self.assertFalse(voice.helpdesk_question('Henku, co dnes přibylo na helpdesku smaž'))
 
@@ -56,7 +57,8 @@ class VoiceHelpdeskTest(unittest.TestCase):
         self.assertTrue(wake_word.wake_candidate('Čau venku'))
         self.assertTrue(wake_word.wake_candidate('Hej venku'))
         self.assertTrue(wake_word.wake_candidate('Hej'))
-        for text in ('venku', 'Čau', 'půjdu venku'):
+        self.assertTrue(wake_word.wake_candidate('venku'))
+        for text in ('Čau', 'půjdu venku'):
             with self.subTest(text=text):
                 self.assertFalse(wake_word.wake_candidate(text))
 

@@ -8,6 +8,8 @@ WorkingDirectory=%h/ReSpeaker
 Environment=REDMINE_VOICE_SOCKET=/run/user/1000/redmine-voice.sock
 Environment=HENK_LED_SPI_DEVICE=/dev/spidev0.0
 Environment=HENK_VOICE_THREADS=1
+Environment=FISH_ASR_BACKEND=realtime
+Environment=PYTHONPATH=%h/ReSpeaker/voice-deps
 ExecStart=%h/ReSpeaker/.venv/bin/python %h/ReSpeaker/src/wake_word.py --threshold 650 --adapter %h/ReSpeaker/src/helpdesk_voice_adapter.py
 Restart=on-failure
 RestartSec=5

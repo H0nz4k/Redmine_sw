@@ -31,7 +31,7 @@ def helpdesk_question(text):
     if ' ' in target and target not in ('help desk', 'help desku'):
         return False
     target = target.replace(' ', '')
-    return (similar(day, ('dnes', 'dneska'), .75)
+    return ((day == 'tes' or similar(day, ('dnes', 'dneska'), .75))
             and similar(verb, ('pribylo', 'pribyly', 'pribyva'), .75)
             and target.startswith('h') and 6 <= len(target) <= 14
             and similar(target, ('helpdesku', 'helpdesk'), .65))

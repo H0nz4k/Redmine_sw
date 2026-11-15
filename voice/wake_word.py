@@ -12,6 +12,7 @@ import math
 import os
 from pathlib import Path
 import re
+import signal
 import subprocess
 import sys
 import tempfile
@@ -27,7 +28,7 @@ WAKE_RE = re.compile(r"(?<!\w)(?:hej\s+|cau\s+|ahoj\s+)?henk(?:u|ovi)(?!\w)")
 # It ignores out-of-vocabulary grammar entries, as confirmed on HanzHub.
 # Phonetically near 'venku' IS in its vocabulary (observed on the HUB).
 # Keep [unk] to avoid interpreting every noise as the wake word.
-WAKE_GRAMMAR = ["hej", "čau venku", "hej venku", "[unk]"]
+WAKE_GRAMMAR = ["hej", "venku", "čau venku", "hej venku", "[unk]"]
 ALIAS_RE = re.compile(r"^(?:(?:hej|cau|ahoj)\s+)?venku(?:\s|$)")
 DEFAULT_MODEL = Path.home() / ".local/share/respeaker/models/vosk-model-small-cs-0.4-rhasspy"
 
@@ -49,7 +50,7 @@ def activated(text):
 
 def wake_candidate(text):
     """Recognize requested wake words; bare hej also needs ASR confirmation."""
-    return bool(re.fullmatch(r"(?:hej|(?:cau|hej) venku)(?: unk)*", normalize(text)))
+    return bool(re.fullmatch(r"(?:hej|venku|(?:cau|hej) venku)(?: unk)*", normalize(text)))
 
 
 def has_request(text):
@@ -204,6 +205,9 @@ def run(model_path, adapter, threshold, once=False, debug=False, legacy_tts=Fals
     from voice_bridge import key, load_voice, transcribe, synthesize, speak_streaming, ask_henk, SPEAKER
     from led_status import StatusLeds
 
+    if os.environ.get('FISH_ASR_BACKEND') == 'realtime':
+        from fish_realtime_asr import transcribe
+
     if not model_path.is_dir():
         raise ValueError(f"Chybí lokální český Vosk model: {model_path}")
     if not adapter.is_file():
@@ -266,8 +270,8 @@ def run(model_path, adapter, threshold, once=False, debug=False, legacy_tts=Fals
                     # and independently confirm the complete ASR transcript.
                     if wake_candidate(text) and sum(wake_energy) >= 3:
                         hej_hits += 1
-                        bare_hey = bool(re.fullmatch(r'hej(?: unk)*', candidate))
-                        trigger = (not bare_hey and final_wake) or hej_hits >= 3
+                        ambiguous = bool(re.fullmatch(r'(?:hej|venku)(?: unk)*', candidate))
+                        trigger = (not ambiguous and final_wake) or hej_hits >= 3
                     else:
                         hej_hits = 0
                         trigger = False
@@ -390,8 +394,13 @@ def main():
     run(args.model, args.adapter, args.threshold, args.once, args.debug, args.legacy_tts, args.mic_channel)
 
 
+def _stop(_signal, _frame):
+    raise KeyboardInterrupt
+
+
 if __name__ == "__main__":
     try:
+        signal.signal(signal.SIGTERM, _stop)
         main()
     except KeyboardInterrupt:
         print("\nUkončeno.")
