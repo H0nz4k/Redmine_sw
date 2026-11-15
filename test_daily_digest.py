@@ -290,8 +290,7 @@ class DigestTests(unittest.TestCase):
         self.issue(91, "2026-11-13T09:00:00Z", "2026-11-13T14:00:00Z", journals=journal)
         self.details[91]["description"] = "Neodcházejí e-maily."
         answer = json.dumps({
-            "summary": "E-maily se neodesílaly. Petr zkontroloval DNS. "
-                       "Záznam neprokazuje opravu.",
+            "summary": "Neodcházejí e-maily. Zkontroloval DNS.",
             "source_ids": ["issue:91", "journal:91:11"]
         }, ensure_ascii=False)
         with patch.dict(os.environ, {"HENK_DIGEST_MODEL": "local-test"}):
@@ -300,7 +299,7 @@ class DigestTests(unittest.TestCase):
                 model.assert_called_once()
         report = digest.read_report(self.connect, "2026-11-13")
         self.assertIn("## Místní AI shrnutí", report)
-        self.assertIn("Petr zkontroloval DNS", report)
+        self.assertIn("Zkontroloval DNS", report)
         self.assertIn("Vytvořeno:", report)
         self.assertIn("13.11.2026 17:30:00 (Europe/Prague)", report)
         self.assertIn("journal:91:11", report)
@@ -321,7 +320,8 @@ class DigestTests(unittest.TestCase):
         journal = [{"id": 11, "created_on": "2026-11-13T14:00:00Z",
                     "user": {"name": "Petr"}, "notes": "Zkontroloval DNS.", "details": []}]
         self.issue(91, "2026-11-13T09:00:00Z", "2026-11-13T14:00:00Z", journals=journal)
-        answer = json.dumps({"summary": "E-maily se neodesílaly. Petr zkontroloval DNS.",
+        self.details[91]["description"] = "Neodcházejí e-maily."
+        answer = json.dumps({"summary": "Neodcházejí e-maily. Zkontroloval DNS.",
                              "source_ids": ["issue:91", "journal:91:11"]}, ensure_ascii=False)
         with patch.dict(os.environ, {"HENK_DIGEST_MODEL": "local-test"}):
             with patch.object(digest.henk_digest, "_ollama", return_value=answer):
@@ -332,7 +332,7 @@ class DigestTests(unittest.TestCase):
         self.assertIn("AI shrnutí není dostupné", report)
         self.assertIn("starší výsledek", report)
         self.assertIn("není aktuálním shrnutím", report)
-        self.assertIn("Petr zkontroloval DNS", report)
+        self.assertIn("Zkontroloval DNS", report)
         with self.connect() as db:
             self.assertEqual(db.execute("SELECT COUNT(*) FROM digest_ai_results").fetchone()[0], 1)
             self.assertEqual(db.execute("SELECT end_utc FROM digest_ai_results").fetchone()[0], "2026-11-13T16:30:00Z")

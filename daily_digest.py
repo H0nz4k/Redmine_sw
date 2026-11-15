@@ -350,7 +350,7 @@ def generate(connect, issues, request, base, now=None):
                        "AI shrnutí není aktivováno. Zůstává faktický soupis Redminu.")
         else:
             try:
-                result_text = henk_digest.summarize_private(private_source, base, model)
+                result_text = henk_digest.summarize_private(private_source, base, model, connect=connect)
                 generated = _stamp(datetime.now(timezone.utc))
                 ai_text = ("## Místní AI shrnutí\n\n"
                            "Vytvořeno: " + _display_time(generated) + "; období: " + _display_time(start) +
