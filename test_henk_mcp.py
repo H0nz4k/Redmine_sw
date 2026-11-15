@@ -67,6 +67,22 @@ class HenkMcpTests(unittest.TestCase):
         with self.assertRaises(henk_mcp.HenkUnavailable):
             henk_mcp.infer(self.prompt, 'henk', self.connect, call=call, verify=lambda: None)
 
+    @patch.dict(os.environ, {'HENK_REDMINE_OPENAI_CONSENT': '1'})
+    def test_confirmed_missing_key_can_retry_but_unknown_failure_keeps_uuid(self):
+        for reason, fresh in [('digest_api_credential_unavailable', True), ('digest_openai_unavailable', False)]:
+            sent = []
+            def call(name, args):
+                ident = args['request_id']
+                if name == 'send_henk_message':
+                    sent.append(ident)
+                    return {'id': ident, 'phase': 'BLOCKED'}
+                return {'result': [{'message_id': ident, 'kind': 'blocked', 'body': '[' + reason + ']'}]}
+            prompt = self.prompt.replace('tajne', 'tajne-' + reason)
+            for _ in range(2):
+                with self.assertRaises(henk_mcp.HenkUnavailable):
+                    henk_mcp.infer(prompt, 'henk', self.connect, call=call, verify=lambda: None)
+            self.assertEqual(sent[0] != sent[1], fresh)
+
 
 if __name__ == '__main__':
     unittest.main()

@@ -49,15 +49,51 @@ def request(path, params=None):
     with urllib.request.urlopen(req, timeout=30) as response:
         return json.load(response)
 
-def issues(params):
+
+class _DigestNoRedirect(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        return None
+
+
+def digest_request(path, params=None):
+    """Only Redmine issue/project text endpoints; never follow redirects."""
+    params = params or {}
+    if path == '/issues.json':
+        allowed = {'status_id', 'updated_on', 'limit', 'offset'}
+    elif path == '/projects.json':
+        allowed = {'limit', 'offset'}
+    elif re.fullmatch(r'/issues/[1-9][0-9]*\.json', path):
+        if params != {'include': 'journals'}:
+            raise ValueError('Nepovolené parametry historie Redmine.')
+        allowed = {'include'}
+    else:
+        raise ValueError('Nepovolený zdroj podkladů Redmine.')
+    if set(params) - allowed:
+        raise ValueError('Nepovolené parametry podkladů Redmine.')
+    url = BASE + path + ('?' + urllib.parse.urlencode(params) if params else '')
+    req = urllib.request.Request(url, headers={'X-Redmine-API-Key': KEY, 'Accept': 'application/json'})
+    opener = urllib.request.build_opener(_DigestNoRedirect())
+    with opener.open(req, timeout=30) as response:
+        return json.load(response)
+
+
+def _issues_with(requester, params):
     offset = 0
     while True:
-        data = request('/issues.json', {**params, 'limit': 100, 'offset': offset})
+        data = requester('/issues.json', {**params, 'limit': 100, 'offset': offset})
         batch = data['issues']
         yield from batch
         offset += len(batch)
         if not batch or offset >= data['total_count']:
             break
+
+
+def issues(params):
+    yield from _issues_with(request, params)
+
+
+def digest_issues(params):
+    yield from _issues_with(digest_request, params)
 
 def classify(issue):
     content = ' ' + (issue.get('subject', '') + ' ' + (issue.get('description') or '')).lower() + ' '
@@ -437,7 +473,7 @@ def digest_worker():
     while True:
         try:
             if KEY and daily_digest.due(connect):
-                daily_digest.generate_missed_reports(connect, issues, request, BASE)
+                daily_digest.generate_missed_reports(connect, digest_issues, digest_request, BASE)
                 with connect() as db:
                     db.execute("INSERT INTO meta(key,value) VALUES('digest_error','') ON CONFLICT(key) DO UPDATE SET value=excluded.value")
         except Exception as exc:
@@ -568,7 +604,7 @@ class Handler(BaseHTTPRequestHandler):
                 else:
                     if not KEY:
                         raise ValueError('Chybí REDMINE_API_KEY.')
-                    result = daily_digest.launch_manual_report(connect, issues, request, BASE)
+                    result = daily_digest.launch_manual_report(connect, digest_issues, digest_request, BASE)
                     self.send(result, status=202 if result.get('accepted') else 409)
             elif self.path.startswith('/api/summary/'):
                 iid = int(self.path.rsplit('/', 1)[1])

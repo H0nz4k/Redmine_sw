@@ -28,8 +28,13 @@ MCP_COMMAND = (
     "/var/lib/henkmcp-runtime/venv/bin/python", "-I", "-B",
     "/opt/hanzhub-project-control/mcp-channel/server.py",
 )
-# Build-time pins are filled only after the reviewed Henk changes are tested.
-TRUSTED_RUNTIME = {}
+# Exact candidate sources; the installed process must also be newer than them.
+TRUSTED_RUNTIME = {
+    MCP_DIR + '/agent_worker.py': 'ea21e90994111075ac88cb01e457f3208d8d759b780e12f46168c08b50c30cad',
+    MCP_DIR + '/channel.py': '9207b6effd4174852a1f136f16bbc91750a219b0da28a3b8872096d30765da8a',
+    MCP_DIR + '/henk_openai.py': 'ab7a9558518751c38c57defec2a238ce8fe774d68522f4f6276a53c1a4e5b18e',
+    MCP_DIR + '/henk_redaction.py': '033f8e177b293be03f0981a8cd37bbf45a99a9e064402979fde2e9fdb55de892',
+}
 
 
 class HenkUnavailable(RuntimeError):
@@ -37,9 +42,10 @@ class HenkUnavailable(RuntimeError):
 
 
 def verify_runtime():
-    """Fail closed unless both exact root-controlled source files are installed."""
-    if os.name != "posix" or len(TRUSTED_RUNTIME) != 2:
+    """Fail closed unless exact root-controlled sources were loaded after install."""
+    if os.name != "posix" or len(TRUSTED_RUNTIME) != 4:
         raise HenkUnavailable("Ověřený režim Henka bez operací není nainstalován.")
+    newest_ns = 0
     for filename, expected in TRUSTED_RUNTIME.items():
         path = Path(filename)
         try:
@@ -55,8 +61,29 @@ def verify_runtime():
                 actual = hashlib.file_digest(stream, "sha256").hexdigest()
             if actual != expected:
                 raise HenkUnavailable("Běžící zdroj Henka neodpovídá ověřenému režimu.")
+            newest_ns = max(newest_ns, path.stat().st_mtime_ns)
         except OSError as error:
             raise HenkUnavailable("Ověřený zdroj Henka není dostupný.") from error
+    try:
+        result = subprocess.run(['/usr/bin/systemctl', 'show', 'hanzhub-mcp-agent.service',
+                                 '-p', 'MainPID', '-p', 'ActiveState'], capture_output=True,
+                                text=True, timeout=5, check=True)
+        props = dict(line.split('=', 1) for line in result.stdout.splitlines() if '=' in line)
+        pid = int(props['MainPID'])
+        if props['ActiveState'] != 'active' or pid <= 0:
+            raise ValueError('inactive')
+        proc = Path('/proc') / str(pid)
+        argv = (proc / 'cmdline').read_bytes().split(b'\0')
+        if os.fsencode(MCP_DIR + '/agent_worker.py') not in argv:
+            raise ValueError('unexpected process')
+        proc_stat = (proc / 'stat').read_text(encoding='ascii')
+        ticks = int(proc_stat.rsplit(')', 1)[1].split()[19])
+        boot = next(int(line.split()[1]) for line in Path('/proc/stat').read_text().splitlines() if line.startswith('btime '))
+        started_ns = boot * 1_000_000_000 + ticks * 1_000_000_000 // os.sysconf('SC_CLK_TCK')
+        if newest_ns >= started_ns - 1_000_000_000:
+            raise ValueError('stale process')
+    except (OSError, ValueError, KeyError, StopIteration, IndexError, subprocess.SubprocessError) as error:
+        raise HenkUnavailable("Ověřený worker Henka ještě nenačetl novou verzi.") from error
 
 
 def _call(name, arguments):
@@ -114,7 +141,7 @@ def infer(prompt, model, connect, *, call=_call, verify=verify_runtime,
         safe["period_source_ids"] = period_ids
     except (ValueError, TypeError, KeyError, AttributeError) as error:
         raise HenkUnavailable("Neplatný vstup shrnutí.") from error
-    body = PREFIX + json.dumps({"context": safe}, ensure_ascii=False, separators=(",", ":"))
+    body = PREFIX + json.dumps({"context": safe, "model": model}, ensure_ascii=False, separators=(",", ":"))
     if len(body) > MAX_MESSAGE_CHARS or len(body.encode("utf-8")) > 16000:
         raise HenkUnavailable("Podklady přesahují limit jedné zprávy Henka.")
     verify()  # Never send to an older worker that might invoke operations.
@@ -139,13 +166,28 @@ def infer(prompt, model, connect, *, call=_call, verify=verify_runtime,
         with connect() as db:
             db.execute("DELETE FROM digest_henk_requests WHERE fingerprint=? AND request_id=?", (fingerprint, ident))
         raise HenkUnavailable("Zpráva vypršela před převzetím; lze ji znovu spustit.")
+    if phase == "BLOCKED":
+        events = call("list_henk_events", {"request_id": ident, "after_cursor": 0, "limit": 50})
+        events = events.get("result") if isinstance(events, dict) else events
+        before_send = ("[digest_api_credential_unavailable]", "[digest_openai_not_enabled]",
+                       "[digest_api_auth_rejected]")
+        if (isinstance(events, list) and all(isinstance(e, dict) and e.get("message_id") == ident for e in events)
+                and any(e.get("kind") == "blocked" and isinstance(e.get("body"), str)
+                        and e["body"].endswith(before_send) for e in events)):
+            # Credential/config rejection is definitive; the next invocation may
+            # create a new ID. Never do this for a timeout or unknown outcome.
+            with connect() as db:
+                db.execute("DELETE FROM digest_henk_requests WHERE fingerprint=? AND request_id=?", (fingerprint, ident))
+        raise HenkUnavailable("Henk požadavek odmítl; zůstává poslední úspěšné shrnutí.")
     if phase != "DONE":
         raise HenkUnavailable("Henk výsledek nepotvrdil; nový požadavek se nevytváří.")
     events = call("list_henk_events", {"request_id": ident, "after_cursor": 0, "limit": 50})
     events = events.get("result") if isinstance(events, dict) else events
     if not isinstance(events, list) or any(not isinstance(event, dict) or event.get("message_id") != ident for event in events):
         raise HenkUnavailable("Odpověď nemá správnou korelaci.")
-    if any(event.get("kind") not in ("received", "answer", "done") for event in events):
+    if any(event.get("kind") not in ("received", "answer", "done") and not
+           (event.get("kind") == "progress" and event.get("body") == "Čekám na dokončení předchozí úlohy.")
+           for event in events):
         raise HenkUnavailable("Henk oznámil nepovolenou událost.")
     answers = [event.get("body") for event in events if event.get("kind") == "answer"]
     done = [event for event in events if event.get("kind") == "done"]
