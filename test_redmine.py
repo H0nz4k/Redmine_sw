@@ -24,6 +24,45 @@ class DigestSourceBoundaryTests(unittest.TestCase):
             self.assertTrue(req.full_url.endswith('/issues/1.json?include=journals'))
         self.assertIsNone(redmine._DigestNoRedirect().redirect_request(None, None, 302, None, None, 'https://example.invalid/attachments/1'))
 
+
+class CloseIssueTests(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.db = patch.object(redmine, 'DB', os.path.join(self.tmp.name, 'test.db')); self.db.start(); self.addCleanup(self.db.stop)
+        self.key = patch.object(redmine, 'KEY', 'test'); self.key.start(); self.addCleanup(self.key.stop)
+        self.item = {'id': 22, 'updated_on': 'v1', 'status': {'id': 1}, 'allowed_statuses': [{'id': 2, 'name': 'Uzavřený'}]}
+        with redmine.connect() as db:
+            db.execute('INSERT INTO issues VALUES (?, ?, ?, ?)', (22, json.dumps(self.item), 'v1', 'v1'))
+        self.statuses = {'issue_statuses': [{'id': 1, 'is_closed': False}, {'id': 2, 'is_closed': True}]}
+
+    def test_closes_only_after_verified_and_removes_from_snapshot(self):
+        responses = [{'issue': self.item}, self.statuses, {'issue': {'status': {'id': 2}}}]
+        with patch.object(redmine, 'request', side_effect=responses), patch.object(redmine, 'redmine_write') as write:
+            self.assertTrue(redmine.close_issue(22, 'v1')['ok'])
+            write.assert_called_once_with('/issues/22.json', 'PUT', {'issue': {'status_id': 2}})
+        with redmine.connect() as db:
+            self.assertIsNone(db.execute('SELECT id FROM issues WHERE id=22').fetchone())
+
+    def test_stale_or_ambiguous_status_never_writes(self):
+        with patch.object(redmine, 'redmine_write') as write:
+            with self.assertRaisesRegex(ValueError, 'změnil'):
+                redmine.close_issue(22, 'old')
+            with patch.object(redmine, 'request', side_effect=[{'issue': dict(self.item, updated_on='v2')}]):
+                with self.assertRaisesRegex(ValueError, 'změnil'): redmine.close_issue(22, 'v1')
+            with patch.object(redmine, 'request', side_effect=[{'issue': self.item}, {'issue_statuses': []}]):
+                with self.assertRaisesRegex(ValueError, 'jednoznačně'): redmine.close_issue(22, 'v1')
+            with patch.object(redmine, 'request', return_value={'issue': dict(self.item, allowed_statuses=None)}):
+                with self.assertRaisesRegex(ValueError, 'neposkytl'): redmine.close_issue(22, 'v1')
+            write.assert_not_called()
+
+    def test_unconfirmed_write_keeps_item(self):
+        with patch.object(redmine, 'request', side_effect=[{'issue': self.item}, self.statuses, OSError('offline')]), patch.object(redmine, 'redmine_write'):
+            with self.assertRaisesRegex(RuntimeError, 'nelze ověřit'): redmine.close_issue(22, 'v1')
+        with redmine.connect() as db:
+            self.assertIsNotNone(db.execute('SELECT id FROM issues WHERE id=22').fetchone())
+
+
 class SummaryTests(unittest.TestCase):
     def test_model_result_and_loopback(self):
         from io import BytesIO
@@ -173,6 +212,7 @@ class SyncTests(unittest.TestCase):
         result = customer_suggestions('Potíže ZŠ Nové Město', '', candidates)
         self.assertEqual([c['id'] for c in result], [4, 5])
         self.assertEqual(customer_suggestions('Něco jiného', '', candidates), [])
+        self.assertEqual(customer_suggestions('', 'Nefunguje mi aplikace e-jídelníček.', [{'id': 10, 'name': 'AAA Test E-jidelnicek'}]), [])
         partial = customer_suggestions('Oprava v Trebechovicich', '', [{'id': 9, 'name': 'Třebechovice škola', 'address': ''}])
         self.assertEqual(partial, [])
         partial = customer_suggestions('Oprava Třebechovice', '', [{'id': 9, 'name': 'Třebechovice škola', 'address': ''}])

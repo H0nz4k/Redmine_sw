@@ -29,7 +29,7 @@ def customer_suggestions(subject, description, candidates):
     raw = (subject or '') + ' ' + (description or '')
     text = ' ' + normalize(raw) + ' '
     words = set(text.split())
-    generic = {'zakladni', 'stredni', 'materska', 'skolni', 'jidelnicka', 'skolnich', 'organizace', 'prispevkova', 'nemocnice', 'gymnazium', 'pavilon', 'zakaznik', 'skola', 'jidelnа', 'praha', 'mesto'}
+    generic = {'zakladni', 'stredni', 'materska', 'skolni', 'jidelnicka', 'jidelnicek', 'skolnich', 'organizace', 'prispevkova', 'nemocnice', 'gymnazium', 'pavilon', 'zakaznik', 'skola', 'jidelnа', 'praha', 'mesto'}
     contact_generic = generic | {'vedouci', 'stravovani', 'kontakt', 'telefon', 'email', 'reditel', 'reditelka', 'jidelna', 'skolа'}
     names, contacts = [], []
     for c in candidates:

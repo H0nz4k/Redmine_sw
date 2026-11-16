@@ -91,3 +91,9 @@ Kandidát doplňuje samostatný typ Henkovy zprávy `digest`, který volá OpenA
 Verze `55385e9` je po schválení nasazena s Henkovým adaptérem `ecb7ae5`. Model `gpt-4.1-mini` prošel syntetickým testem a produkční ruční průchod 15. 11. 2026 vytvořil souhrn dvou požadavků; citace byly nezávisle porovnány se zdroji a zobrazení ověřeno v prohlížeči. Přílohy se nevyžadují. Při simulovaném výpadku v izolované kopii zůstalo poslední úspěšné shrnutí zachováno. Plán zůstal nastaven na 17:30; další plánované spuštění dosud neproběhlo. Postup návratu je v `henk-runtime/DEPLOYMENT.md`.
 
 Dlouhé podklady se v této větvi dělí po úplných větách. Model vybírá indexy vět, text a zdrojová ID se sestaví ze vstupu. Nebezpečné nebo necitovatelné části jsou v reportu výslovně označeny; příliš dlouhá samostatná věta nebo neplatná odpověď způsobí viditelný neúspěch AI části. Výsledkem je výběr přesných citací, nikoli nezávislé potvrzení původních tvrzení. Stav a další kroky jsou v `AI_HANDOFF.md`.
+
+### Uzavření požadavku
+
+Tlačítko **Uzavřít požadavek** po potvrzení změní stav v Redmine a po ověření položku odstraní z přehledu otevřených požadavků. Vyžaduje právě jeden povolený uzavřený stav a Redmine API s podporou `allowed_statuses` (Redmine 5.0 nebo novější). Pokud jej nelze určit, požadavek uzavřete přímo v Redmine. Při nejasném výsledku zápisu zkontrolujte stav v Redmine před opakováním.
+
+Návrh provozovny je pouze kandidát podle shody v textu či kontaktech. Přes **Prověřit návrhy provozovny** nebo **Návrhy přiřazení** ověřte kandidáty a případně potvrďte propojení zákazníka; samotné zobrazení návrhu nic nezapisuje.

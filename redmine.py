@@ -174,7 +174,13 @@ def find_issue_customers(issue_id):
     return found
 
 
+sync_close_lock = threading.RLock()
+
 def sync():
+    with sync_close_lock:
+        return _sync()
+
+def _sync():
     if not KEY:
         raise ValueError('Chybí REDMINE_API_KEY.')
     me = request('/users/current.json')['user']['id']
@@ -403,6 +409,39 @@ def apply_helpdesk_change(iid, action, target, expected_updated, expected_token)
         return _apply_helpdesk_change(iid, action, target, expected_updated, expected_token)
 
 
+def close_issue(iid, expected_updated):
+    if not KEY or not isinstance(expected_updated, str) or not expected_updated:
+        raise ValueError('Neplatné údaje požadavku.')
+    with sync_close_lock:
+        with connect() as db:
+            row = db.execute('SELECT updated FROM issues WHERE id=?', (iid,)).fetchone()
+        if not row or row[0] != expected_updated:
+            raise ValueError('Požadavek již není v přehledu nebo se změnil. Načtěte přehled znovu.')
+        current = request(f'/issues/{iid}.json', {'include': 'allowed_statuses'})['issue']
+        if current.get('updated_on') != expected_updated:
+            raise ValueError('Požadavek se mezitím změnil. Načtěte přehled znovu.')
+        allowed = current.get('allowed_statuses')
+        if not isinstance(allowed, list):
+            raise ValueError('Redmine neposkytl povolené stavy. Uzavřete požadavek přímo v Redmine.')
+        statuses = request('/issue_statuses.json')['issue_statuses']
+        closed_ids = {s['id'] for s in statuses if s.get('is_closed') is True}
+        choices = [s for s in allowed if s.get('id') in closed_ids]
+        if len(choices) != 1:
+            raise ValueError('Nelze jednoznačně určit povolený uzavřený stav. Uzavřete požadavek přímo v Redmine.')
+        target = choices[0]['id']
+        redmine_write(f'/issues/{iid}.json', 'PUT', {'issue': {'status_id': target}})
+        try:
+            result = request(f'/issues/{iid}.json')['issue']
+        except Exception:
+            raise RuntimeError('Změna byla odeslána, ale výsledek nelze ověřit. Před opakováním zkontrolujte Redmine.') from None
+        if result.get('status', {}).get('id') != target:
+            raise RuntimeError('Redmine nepotvrdil uzavření. Zkontrolujte požadavek v Redmine.')
+        with connect() as db:
+            db.execute('DELETE FROM issues WHERE id=?', (iid,))
+            db.execute('DELETE FROM issue_customer_suggestions WHERE issue_id=?', (iid,))
+        return {'ok': True}
+
+
 def related_issues(customer_id):
     if customer_id not in {c['issue_id'] for c in customers()['customers']}:
         raise ValueError('Zákazník nebyl nalezen.')
@@ -604,7 +643,15 @@ class Handler(BaseHTTPRequestHandler):
         if self.headers.get('Origin') not in allowed:
             self.send({'error':'Nepovolený původ'}, status=403); return
         try:
-            if self.path.startswith('/api/helpdesk-apply/'):
+            if self.path.startswith('/api/close-issue/'):
+                if self.headers.get('Origin') is None or self.headers.get_content_type() != 'application/json':
+                    self.send({'error': 'Nepovolený požadavek.'}, status=403); return
+                length = int(self.headers.get('Content-Length', '0'))
+                if not 0 < length <= 2048: raise ValueError('Neplatný požadavek.')
+                body = json.loads(self.rfile.read(length))
+                iid = int(self.path.rsplit('/', 1)[1])
+                self.send(close_issue(iid, body.get('updated_on')))
+            elif self.path.startswith('/api/helpdesk-apply/'):
                 origin = self.headers.get('Origin')
                 if origin not in allowed or origin is None or self.headers.get_content_type() != 'application/json':
                     self.send({'error': 'Nepovolený požadavek.'}, status=403); return

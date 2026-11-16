@@ -50,3 +50,5 @@ html[data-theme=dark] .overview .nav button[aria-current=true]{color:#ffd1c8!imp
 @media(max-width:750px){.overview header>div{flex-wrap:wrap}.overview .overview-actions{margin-left:auto}.overview .appearance-controls{position:fixed;top:68px;right:16px;max-height:calc(100dvh - 84px);overflow:auto}.overview .appearance-controls button{min-height:44px}}
 @media(max-width:380px){header #sync{width:auto!important}.overview .overview-actions{width:auto}}
 .overview .appearance-panel{position:static}
+
+.brief-content{white-space:normal}.brief-facts{margin:0;display:grid;gap:10px}.brief-facts div{display:grid;grid-template-columns:minmax(140px, .75fr) minmax(0, 1.25fr);gap:4px 16px}.brief-facts dt{font-weight:700;color:var(--ui-muted)}.brief-facts dd{margin:0;color:var(--ui-text)}.brief-description{margin-top:20px;padding-top:16px;border-top:1px solid var(--ui-border)}.brief-description h3{font-size:var(--ui-size);margin:0 0 8px}.brief-description p{white-space:pre-wrap;margin:0 0 16px;color:var(--ui-text)}@media(max-width:480px){.brief-facts div{grid-template-columns:1fr;gap:0}}
