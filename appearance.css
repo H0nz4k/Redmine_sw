@@ -109,3 +109,11 @@ body.overview{min-height:100vh;background:var(--ui-surface)!important}
 .overview .nav::after{content:"";position:absolute;left:0;right:0;bottom:-12px;height:10px;box-sizing:border-box;background:var(--ui-bg);border-left:2px solid #a32f23;border-right:2px solid #a32f23;pointer-events:none}
 html[data-theme=dark] .overview .nav::after{border-color:#ff9b8f}
 @media(max-width:750px){.overview .brand-mark{width:36px;height:36px}.overview .brand-link{font-size:calc(var(--ui-size) + 4px)}}
+
+/* Jednotlivé požadavky mají malý odstup a úplný rámeček. */
+.overview .issue+.issue{margin-top:6px;border-top:2px solid var(--ui-border)}
+
+/* Jednotné jemné zaoblení bez uzavření aktivní karty dole. */
+.overview .issue{border-radius:4px}
+.overview .nav button[aria-current=true]{border-radius:4px 4px 0 0}
+.overview .panel,.overview .embedded-panel{border-bottom:2px solid #a32f23;border-radius:0 0 4px 4px}
