@@ -42,7 +42,7 @@ def app_version():
     root = Path(__file__).resolve().parent
     name = (root / 'VERSION').read_text(encoding='utf-8').strip() if (root / 'VERSION').exists() else 'unversioned'
     fingerprint = hashlib.sha256()
-    for filename in ('VERSION', 'redmine.py', 'index.html', 'triage.py', 'daily_digest.py', 'denni-prehled.html', 'henk_digest.py', 'henk_mcp.py', 'henk_redaction.py', 'appearance.css', 'appearance.js', 'realizace.js', 'realization_create.py'):
+    for filename in ('VERSION', 'redmine.py', 'index.html', 'mapa.html', 'triage.py', 'daily_digest.py', 'denni-prehled.html', 'henk_digest.py', 'henk_mcp.py', 'henk_redaction.py', 'appearance.css', 'appearance.js', 'realizace.js', 'realization_create.py'):
         path = root / filename
         if path.exists():
             fingerprint.update(filename.encode('utf-8') + b'\0' + path.read_bytes())

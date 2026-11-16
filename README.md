@@ -6,7 +6,7 @@ Lokální webový přehled otevřených úkolů přihlášeného uživatele a pr
 
 ## Verze nasazené aplikace
 
-V hlavičce webu je uvedena **Verze** (z textového souboru `VERSION`) a **sestavení** (desetimístný SHA-256 otisk skutečných souborů `VERSION`, `redmine.py`, `index.html`, `triage.py`, `daily_digest.py`, `denni-prehled.html`, `henk_digest.py`, `appearance.css`, `appearance.js` na daném serveru). Tím lze odlišit změny kódu i tam, kde nasazená kopie nemá složku `.git`. Stejné informace jsou v `GET /api/version` a `GET /api/overview` v poli `version`.
+V hlavičce webu je uvedena **Verze** (z textového souboru `VERSION`) a **sestavení** (desetimístný SHA-256 otisk skutečných souborů `VERSION`, `redmine.py`, `index.html`, `mapa.html`, `triage.py`, `daily_digest.py`, `denni-prehled.html`, `henk_digest.py`, `appearance.css`, `appearance.js` na daném serveru). Tím lze odlišit změny kódu i tam, kde nasazená kopie nemá složku `.git`. Stejné informace jsou v `GET /api/version` a `GET /api/overview` v poli `version`.
 
 Každé další vydání musí aktualizovat `VERSION`; úprava běžících souborů změní také identifikátor sestavení. `0.1.0-dev.1` je první nově zavedené vývojové označení, nikoli tvrzení o dřívějších publikovaných verzích. Větev nebo GitHub PR sama o sobě **neznamená**, že byla nová verze nasazena na HanzHub.
 
