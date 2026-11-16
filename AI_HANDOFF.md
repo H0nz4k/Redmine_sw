@@ -45,3 +45,5 @@ Automatická kontrola v předchozím kroku odmítla převzetí Redmine klíče z
 ## Denní přehled – změny v období (16. 11. 2026)
 
 Ve větvi `feature/close-issue-overview` je upraven výběr podkladů: u starších úkolů jen journal a nové komentáře z období, změny stavů deterministicky podle Redmine, bez modelu při pouhé změně. Metadata stavů jsou volitelná, chybějící hodnoty mají fallback na ID. Staré reporty a data zůstávají zachovány. Syntetický kontext je kompatibilní s nasazeným Henkovým adaptérem; aktuální implementace nebyla ověřena na živých datech ani nasazena. Podrobnosti kandidáta a podmínky v `release-candidate/DEPLOYMENT_PLAN.md` (lokální necommitovaný artefakt).
+
+Po schválení uživatele prošlo 91 testů kandidáta v izolované dočasné složce na HanzHubu bez přeskočení; produkční data a služby se neměnily.
