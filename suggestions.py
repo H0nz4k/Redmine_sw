@@ -78,6 +78,14 @@ def customer_suggestions(subject, description, candidates):
         phone_match = bool(raw_phones & phones(contact))
         email_match = bool(raw_emails & emails(contact))
         signed_match = any(contact_counts[t] <= 3 for t in people & signed)
+        lead_contact = str(candidate.get('lead_contact') or '')
+        lead_name_text = re.sub(r'[\w.+-]+@[\w.-]+', ' ', lead_contact)
+        lead_words = {t for t in normalize(lead_name_text).split()
+                      if len(t) >= 3 and t.isalpha() and t not in contact_generic | {'pan', 'pani', 'mgr', 'ing', 'titul', 'mobil', 'jidelny', 'stravovaci'}}
+        lead_signed = len(lead_words & signed) >= 2
+        lead_phone = bool(raw_phones & phones(lead_contact))
+        lead_email = bool(raw_emails & emails(lead_contact + ' ' + str(candidate.get('email_contact') or '')))
+        qualifies = lead_signed and lead_phone and lead_email
         evidence = []
         if email_match: evidence.append('e-mail')
         if phone_match: evidence.append('telefon')
@@ -90,8 +98,13 @@ def customer_suggestions(subject, description, candidates):
         priority = 3 if contact_match else 2 if signed_match else 1 if exact else 0
         score = 2 * (int(phone_match) + int(email_match)) + int(signed_match) + int(exact)
         reason = 'Shoda: ' + ', '.join(evidence) + '; zkontrolujte provozovnu.'
-        found.append((-priority, -score, candidate['id'], {'id': candidate['id'], 'name': candidate['name'], 'reason': reason, 'strength': 'strong' if contact_match and (signed_match or exact or (phone_match and email_match)) else 'possible'}))
+        found.append((-priority, -score, candidate['id'], qualifies, {'id': candidate['id'], 'name': candidate['name'], 'reason': reason, 'strength': 'strong' if contact_match and (signed_match or exact or (phone_match and email_match)) else 'possible'}))
+    # Only one candidate with all three explicitly requested signals is unambiguous.
+    unique_id = next((item[2] for item in found if item[3]), None) if sum(item[3] for item in found) == 1 else None
+    for _, _, iid, _, item in found:
+        item['unambiguous'] = iid == unique_id
     # Weak name fragments are useful only when no better evidence is available.
-    if any(priority < 0 for priority, _, _, _ in found):
+    if any(priority < 0 for priority, _, _, _, _ in found):
         found = [entry for entry in found if entry[0] < 0]
-    return [item for _, _, _, item in sorted(found)[:10]]
+    found.sort(key=lambda row: (not row[4]['unambiguous'], row[0], row[1], row[2]))
+    return [item for _, _, _, _, item in found[:10]]

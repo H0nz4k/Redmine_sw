@@ -274,7 +274,9 @@ def matching_customers():
             continue
         fields = {f.get('name'): f.get('value') for f in item.get('custom_fields', []) if f.get('name') in allowed | {'Adresa'}}
         result.append({'id': item['id'], 'name': item.get('subject', ''), 'address': fields.get('Adresa') or '',
-                       'contacts': [value for key, value in fields.items() if key in allowed and isinstance(value, str)]})
+                       'contacts': [value for key, value in fields.items() if key in allowed and isinstance(value, str)],
+                       'lead_contact': fields.get('Kontakt vedoucí stravování') or '',
+                       'email_contact': fields.get('Email') or ''})
     return result
 
 
@@ -391,6 +393,8 @@ def _apply_helpdesk_change(iid, action, target, expected_updated, expected_token
     else:
         raise ValueError('Neznámý typ změny.')
     with connect() as db:
+        cached_row = db.execute('SELECT payload FROM issue_customer_links WHERE issue_id=?', (iid,)).fetchone()
+        cached_links = json.loads(cached_row[0]) if cached_row else []
         db.execute('DELETE FROM issue_customer_links WHERE issue_id=?', (iid,))
     try:
         result = request(f'/issues/{iid}.json', {'include': 'relations'})['issue']
@@ -398,15 +402,23 @@ def _apply_helpdesk_change(iid, action, target, expected_updated, expected_token
         raise RuntimeError('Změna byla odeslána, ale její výsledek nelze ověřit. Před opakováním zkontrolujte Redmine.')
     if action == 'assignee' and result.get('assigned_to', {}).get('id') != target:
         raise RuntimeError('Redmine nepotvrdil zvolené přiřazení. Zkontrolujte úkol.')
-    if action == 'customer' and not any(target in (r.get('issue_id'), r.get('issue_to_id')) for r in result.get('relations', [])):
-        raise RuntimeError('Redmine nepotvrdil novou vazbu. Zkontrolujte úkol.')
+    if action == 'customer':
+        linked_ids = {r.get('issue_to_id') if r.get('issue_id') == iid else r.get('issue_id') for r in result.get('relations', [])}
+        if target not in linked_ids:
+            raise RuntimeError('Redmine nepotvrdil novou vazbu. Zkontrolujte úkol.')
+        linked_ids.add(result.get('parent', {}).get('id'))
+        links = [c for c in cached_links if c.get('id') in linked_ids and c.get('id') != target]
+        links.append({'id': target, 'name': customer.get('subject', '')})
+        with connect() as db:
+            db.execute('INSERT INTO issue_customer_links VALUES (?, ?, ?) ON CONFLICT(issue_id) DO UPDATE SET updated=excluded.updated, payload=excluded.payload',
+                       (iid, result.get('updated_on') or expected_updated, json.dumps(links, ensure_ascii=False)))
     return {'ok': True}
 
 
 helpdesk_write_lock = threading.Lock()
 
 def apply_helpdesk_change(iid, action, target, expected_updated, expected_token):
-    with helpdesk_write_lock:
+    with helpdesk_write_lock, sync_close_lock:
         return _apply_helpdesk_change(iid, action, target, expected_updated, expected_token)
 
 

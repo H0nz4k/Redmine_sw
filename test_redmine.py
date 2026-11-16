@@ -196,7 +196,7 @@ class SyncTests(unittest.TestCase):
 
     def test_customer_link_rejects_duplicates_and_checks_readback(self):
         issue = {'id': 22, 'project': {'id': 12}, 'updated_on': 'v1', 'relations': []}
-        customer = {'id': 123, 'project': {'id': 1}, 'tracker': {'id': 4}}
+        customer = {'id': 123, 'subject': 'Provoz A', 'project': {'id': 1}, 'tracker': {'id': 4}}
         duplicate = dict(issue, relations=[{'issue_id': 22, 'issue_to_id': 123}])
         with patch.object(redmine, 'request', side_effect=[{'issue': duplicate}, {'issue': customer}]), patch.object(redmine, 'redmine_write') as write:
             with self.assertRaisesRegex(ValueError, 'již propojen'):
@@ -205,6 +205,18 @@ class SyncTests(unittest.TestCase):
         with patch.object(redmine, 'request', side_effect=[{'issue': issue}, {'issue': customer}, {'issue': duplicate}]), patch.object(redmine, 'redmine_write') as write:
             self.assertTrue(redmine.apply_helpdesk_change(22, 'customer', 123, 'v1', redmine.helpdesk_state_token(issue))['ok'])
             write.assert_called_once_with('/issues/22/relations.json', 'POST', {'relation': {'issue_to_id': 123, 'relation_type': 'relates'}})
+        with redmine.connect() as db:
+            row = db.execute('SELECT payload FROM issue_customer_links WHERE issue_id=22').fetchone()
+        self.assertEqual(json.loads(row[0]), [{'id': 123, 'name': 'Provoz A'}])
+
+    def test_customer_link_unverified_does_not_create_cache(self):
+        issue = {'id': 22, 'project': {'id': 12}, 'updated_on': 'v1', 'relations': []}
+        customer = {'id': 123, 'subject': 'Provoz A', 'project': {'id': 1}, 'tracker': {'id': 4}}
+        with patch.object(redmine, 'request', side_effect=[{'issue': issue}, {'issue': customer}, {'issue': issue}]), patch.object(redmine, 'redmine_write'):
+            with self.assertRaisesRegex(RuntimeError, 'nepotvrdil'):
+                redmine.apply_helpdesk_change(22, 'customer', 123, 'v1', redmine.helpdesk_state_token(issue))
+        with redmine.connect() as db:
+            self.assertIsNone(db.execute('SELECT payload FROM issue_customer_links WHERE issue_id=22').fetchone())
 
     def test_hw_assignee_is_honza_not_api_account(self):
         issue = {'id': 22, 'project': {'id': 12}, 'subject': 'Rozbitý terminál',
@@ -300,6 +312,27 @@ class SyncTests(unittest.TestCase):
         self.assertEqual([c['id'] for c in result], [1, 2])
         self.assertIn('jméno v podpisu', result[0]['reason'])
         self.assertNotIn('jméno v podpisu', result[1]['reason'])
+
+    def test_unambiguous_customer_requires_unique_signed_lead_phone_and_email(self):
+        from suggestions import customer_suggestions
+        lead = 'Jana Novotná, tel. 601 234 567, jana@example.cz'
+        candidate = {'id': 1, 'name': 'Provoz A', 'lead_contact': lead,
+                     'email_contact': 'jana@example.cz', 'contacts': [lead]}
+        message = 'Kontakt 601 234 567, jana@example.cz\nS pozdravem\nJana Novotná'
+        self.assertTrue(customer_suggestions('', message, [candidate])[0]['unambiguous'])
+        for incomplete in ('jana@example.cz\nS pozdravem\nJana Novotná',
+                           '601 234 567\nS pozdravem\nJana Novotná',
+                           '601 234 567 jana@example.cz\nS pozdravem\nJana',
+                           '601 234 567 jana@example.cz\nJana Novotná'):
+            with self.subTest(message=incomplete):
+                self.assertFalse(any(c['unambiguous'] for c in customer_suggestions('', incomplete, [candidate])))
+        duplicate = dict(candidate, id=2, name='Provoz B')
+        self.assertFalse(any(c['unambiguous'] for c in customer_suggestions('', message, [candidate, duplicate])))
+        no_lead = dict(candidate, lead_contact='')
+        self.assertFalse(any(c['unambiguous'] for c in customer_suggestions('', message, [no_lead])))
+        phone_only_in_other_contact = dict(candidate, lead_contact='Jana Novotná', contacts=[lead])
+        self.assertFalse(any(c['unambiguous'] for c in customer_suggestions('', message, [phone_only_in_other_contact])))
+        self.assertNotIn('jana@example.cz', str(customer_suggestions('', message, [candidate])))
 
     def test_pagination(self):
         responses = [{'issues':[{'id':1}], 'total_count':2}, {'issues':[{'id':2}], 'total_count':2}]
