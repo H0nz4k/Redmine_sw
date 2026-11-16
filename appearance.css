@@ -78,3 +78,11 @@ html[data-theme=dark] .overview .nav button[aria-current=true]{color:#ffd1c8!imp
 .overview .issue-actions{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));align-content:start;gap:6px}
 .overview .issue-actions button{min-width:0;min-height:38px;padding:6px 8px;line-height:1.2}
 @media(max-width:750px){.overview .issue{grid-template-columns:1fr}.overview .issue-actions button{min-height:44px}}
+
+/* Značka je návratem na přehled ve všech částech aplikace. */
+.brand-link{display:inline-flex;align-items:center;gap:9px;color:var(--ui-text)!important;text-decoration:none;white-space:nowrap;font-weight:700;line-height:1.2}.brand-link:hover{text-decoration:none}.brand-link:focus-visible{outline:3px solid var(--ui-accent);outline-offset:4px}.page-identity{display:flex;align-items:center;gap:16px;flex-wrap:wrap}.page-title{padding-left:16px;border-left:1px solid var(--ui-border);font-size:var(--ui-size);font-weight:500;color:var(--ui-muted)}
+/* Linky sledují šířku obsahu, ne celého okna. */
+.overview header{border-bottom:0}.overview header>div{border-bottom:2px solid var(--ui-border)}
+.overview .nav{max-width:1440px;margin:0 auto;padding-left:24px;padding-right:24px}
+.overview .panel{border-left:1px solid #a32f23;border-right:1px solid #a32f23}html[data-theme=dark] .overview .panel{border-color:#ff9b8f}
+@media(max-width:750px){.overview .nav{padding-left:8px;padding-right:8px}.page-identity{gap:10px}.page-title{padding-left:10px}}
