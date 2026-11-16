@@ -1,4 +1,4 @@
-# Redmine přehled
+# RedCheck
 
 Nápady a plánované funkce jsou v [TODO seznamu](TODO.md).
 
