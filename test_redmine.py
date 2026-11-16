@@ -218,6 +218,21 @@ class SyncTests(unittest.TestCase):
         partial = customer_suggestions('Oprava Třebechovice', '', [{'id': 9, 'name': 'Třebechovice škola', 'address': ''}])
         self.assertIn('zkontrolujte', partial[0]['reason'])
 
+    def test_school_words_alone_do_not_suggest_a_customer(self):
+        from suggestions import customer_suggestions
+        candidates = [
+            {'id': 1, 'name': 'U Nové školy MŠ'},
+            {'id': 2, 'name': 'Škola'},
+            {'id': 3, 'name': 'Základní škola'},
+            {'id': 4, 'name': 'U Tyršovy školy'},
+        ]
+        for word in ('škola', 'školy', 'škole', 'školu', 'školou', 'školách', 'školami', 'základní škola'):
+            with self.subTest(word=word):
+                self.assertEqual(customer_suggestions('Potíže', word, candidates), [])
+        result = customer_suggestions('Objednávka U Tyršovy školy', '', candidates)
+        self.assertEqual([item['id'] for item in result], [4])
+        self.assertIn('úplný název', result[0]['reason'])
+
     def test_contact_matching_and_ambiguity(self):
         from suggestions import customer_suggestions
         customers = [

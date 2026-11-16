@@ -29,7 +29,8 @@ def customer_suggestions(subject, description, candidates):
     raw = (subject or '') + ' ' + (description or '')
     text = ' ' + normalize(raw) + ' '
     words = set(text.split())
-    generic = {'zakladni', 'stredni', 'materska', 'skolni', 'jidelnicka', 'jidelnicek', 'skolnich', 'organizace', 'prispevkova', 'nemocnice', 'gymnazium', 'pavilon', 'zakaznik', 'skola', 'jidelnа', 'praha', 'mesto'}
+    school_words = {'skola', 'skoly', 'skole', 'skolu', 'skolou', 'skol', 'skolach', 'skolami'}
+    generic = school_words | {'zakladni', 'stredni', 'materska', 'skolni', 'jidelnicka', 'jidelnicek', 'skolnich', 'organizace', 'prispevkova', 'nemocnice', 'gymnazium', 'pavilon', 'zakaznik', 'jidelnа', 'praha', 'mesto'}
     contact_generic = generic | {'vedouci', 'stravovani', 'kontakt', 'telefon', 'email', 'reditel', 'reditelka', 'jidelna', 'skolа'}
     names, contacts = [], []
     for c in candidates:
@@ -42,7 +43,8 @@ def customer_suggestions(subject, description, candidates):
     found = []
     for candidate, group, people in zip(candidates, names, contacts):
         name = normalize(candidate.get('name', ''))
-        exact = len(name) >= 5 and ' ' + name + ' ' in text
+        only_school = all(t in school_words | {'zs', 'ms', 'zakladni', 'materska', 'skolni'} for t in name.split())
+        exact = len(name) >= 5 and not only_school and ' ' + name + ' ' in text
         overlap = group & words
         rare = [t for t in overlap if name_counts[t] <= 5]
         evidence = []
