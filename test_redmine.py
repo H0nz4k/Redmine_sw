@@ -344,4 +344,44 @@ class SyncTests(unittest.TestCase):
         with patch.object(redmine, 'request', side_effect=responses):
             self.assertEqual([x['id'] for x in redmine.issues({})], [1,2])
 
+class MapLinkTests(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory(); self.addCleanup(self.tmp.cleanup)
+        db = patch.object(redmine, 'DB', os.path.join(self.tmp.name, 'map.db')); db.start(); self.addCleanup(db.stop)
+        key = patch.object(redmine, 'KEY', 'test'); key.start(); self.addCleanup(key.stop)
+        self.issue = {'id': 22, 'updated_on': 'v1', 'subject': 'Oprava', 'relations': []}
+        self.customer = {'id': 123, 'project': {'id': 1}, 'tracker': {'id': 4}, 'subject': 'Provoz A'}
+
+    def test_prepare_rejects_not_open_or_not_mine(self):
+        with patch.object(redmine, 'issues', return_value=iter([])), patch.object(redmine, 'redmine_write') as write:
+            with self.assertRaisesRegex(ValueError, 'není otevřený'):
+                redmine.map_link_prepare(22)
+            write.assert_not_called()
+
+    def test_stale_or_already_linked_never_writes(self):
+        prep = {'updated_on': 'v2', 'state_token': 'token', 'linked_customers': []}
+        with patch.object(redmine, 'map_link_prepare', return_value=prep), patch.object(redmine, 'redmine_write') as write:
+            with self.assertRaisesRegex(ValueError, 'změnil'):
+                redmine.map_link_customer(22, 123, 'v1', 'token')
+            prep['updated_on'] = 'v1'; prep['linked_customers'] = [{'id': 123}]
+            with self.assertRaisesRegex(ValueError, 'už má'):
+                redmine.map_link_customer(22, 123, 'v1', 'token')
+            write.assert_not_called()
+
+    def test_verified_link_updates_cache(self):
+        prep = {'updated_on': 'v1', 'state_token': 'token', 'linked_customers': []}
+        result = dict(self.issue, updated_on='v2', relations=[{'issue_id': 22, 'issue_to_id': 123}])
+        with patch.object(redmine, 'map_link_prepare', return_value=prep), patch.object(redmine, 'customers', return_value={'customers': [{'issue_id': 123}]}), patch.object(redmine, 'request', side_effect=[{'issue': self.customer}, {'issue': result}]), patch.object(redmine, 'redmine_write') as write:
+            self.assertTrue(redmine.map_link_customer(22, 123, 'v1', 'token')['ok'])
+            write.assert_called_once()
+        with redmine.connect() as db:
+            row = db.execute('SELECT payload FROM issue_customer_links WHERE issue_id=22').fetchone()
+        self.assertEqual(json.loads(row[0]), [{'id': 123, 'name': 'Provoz A'}])
+
+    def test_unverified_link_reports_uncertain(self):
+        prep = {'updated_on': 'v1', 'state_token': 'token', 'linked_customers': []}
+        with patch.object(redmine, 'map_link_prepare', return_value=prep), patch.object(redmine, 'customers', return_value={'customers': [{'issue_id': 123}]}), patch.object(redmine, 'request', side_effect=[{'issue': self.customer}, OSError('offline')]), patch.object(redmine, 'redmine_write'):
+            with self.assertRaisesRegex(RuntimeError, 'nelze ověřit'):
+                redmine.map_link_customer(22, 123, 'v1', 'token')
+
 if __name__ == '__main__': unittest.main()

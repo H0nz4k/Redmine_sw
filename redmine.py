@@ -425,6 +425,49 @@ def apply_helpdesk_change(iid, action, target, expected_updated, expected_token)
         return _apply_helpdesk_change(iid, action, target, expected_updated, expected_token)
 
 
+
+def map_link_prepare(iid):
+    if not KEY:
+        raise ValueError('Chybí REDMINE_API_KEY.')
+    matches = list(issues({'issue_id': str(iid), 'assigned_to_id': 'me', 'status_id': 'open'}))
+    if not any(i.get('id') == iid for i in matches):
+        raise ValueError('Úkol není otevřený nebo není přiřazen přihlášenému uživateli.')
+    current = request(f'/issues/{iid}.json', {'include': 'relations'})['issue']
+    return {'issue_id': iid, 'subject': current.get('subject', ''), 'updated_on': current.get('updated_on'),
+            'state_token': helpdesk_state_token(current), 'linked_customers': find_issue_customers(iid)}
+
+
+def map_link_customer(iid, target, expected_updated, expected_token):
+    if not isinstance(target, int) or isinstance(target, bool) or target <= 0:
+        raise ValueError('Neplatný zákazník.')
+    with helpdesk_write_lock, sync_close_lock:
+        prepared = map_link_prepare(iid)
+        if prepared['updated_on'] != expected_updated or prepared['state_token'] != expected_token:
+            raise ValueError('Úkol se mezitím změnil. Načtěte jej znovu.')
+        if prepared['linked_customers']:
+            raise ValueError('Úkol už má propojenou provozovnu. Zkontrolujte ji v Redmine.')
+        customer = request(f'/issues/{target}.json')['issue']
+        if customer.get('project', {}).get('id') != 1 or customer.get('tracker', {}).get('id') != 4:
+            raise ValueError('Cílový záznam není zákazník v projektu Zákazníci.')
+        if target not in {c['issue_id'] for c in customers()['customers']}:
+            raise ValueError('Zákazník není v mapovém seznamu.')
+        redmine_write(f'/issues/{iid}/relations.json', 'POST', {'relation': {'issue_to_id': target, 'relation_type': 'relates'}})
+        with connect() as db:
+            db.execute('DELETE FROM issue_customer_links WHERE issue_id=?', (iid,))
+        try:
+            result = request(f'/issues/{iid}.json', {'include': 'relations'})['issue']
+        except Exception:
+            raise RuntimeError('Vazba byla odeslána, ale výsledek nelze ověřit. Před opakováním zkontrolujte Redmine.') from None
+        ids = {r.get('issue_to_id') if r.get('issue_id') == iid else r.get('issue_id') for r in result.get('relations', [])}
+        if target not in ids:
+            raise RuntimeError('Redmine nepotvrdil novou vazbu. Zkontrolujte úkol.')
+        links = [{'id': target, 'name': customer.get('subject', '')}]
+        with connect() as db:
+            db.execute('INSERT INTO issue_customer_links VALUES (?, ?, ?) ON CONFLICT(issue_id) DO UPDATE SET updated=excluded.updated, payload=excluded.payload',
+                       (iid, result.get('updated_on') or expected_updated, json.dumps(links, ensure_ascii=False)))
+        return {'ok': True}
+
+
 def close_issue(iid, expected_updated):
     if not KEY or not isinstance(expected_updated, str) or not expected_updated:
         raise ValueError('Neplatné údaje požadavku.')
@@ -691,6 +734,17 @@ class Handler(BaseHTTPRequestHandler):
                 body = json.loads(self.rfile.read(length))
                 self.send(realization_create.create_batch(body, lambda path, params=None: realization_create.api_request(BASE, KEY, path, params), connect,
                     lambda issue: realization_create.create_http(BASE, KEY, issue)))
+            elif self.path.startswith('/api/map-link-prepare/'):
+                if self.headers.get('Origin') is None:
+                    self.send({'error': 'Nepovolený požadavek.'}, status=403); return
+                self.send(map_link_prepare(int(self.path.rsplit('/', 1)[1])))
+            elif self.path.startswith('/api/map-link/'):
+                if self.headers.get('Origin') is None or self.headers.get_content_type() != 'application/json':
+                    self.send({'error': 'Nepovolený požadavek.'}, status=403); return
+                length = int(self.headers.get('Content-Length', '0'))
+                if not 0 < length <= 2048: raise ValueError('Neplatný požadavek.')
+                body = json.loads(self.rfile.read(length))
+                self.send(map_link_customer(int(self.path.rsplit('/', 1)[1]), body.get('target'), body.get('updated_on'), body.get('state_token')))
             elif self.path.startswith('/api/close-issue/'):
                 if self.headers.get('Origin') is None or self.headers.get_content_type() != 'application/json':
                     self.send({'error': 'Nepovolený požadavek.'}, status=403); return
