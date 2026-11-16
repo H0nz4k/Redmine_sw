@@ -117,3 +117,13 @@ html[data-theme=dark] .overview .nav::after{border-color:#ff9b8f}
 .overview .issue{border-radius:4px}
 .overview .nav button[aria-current=true]{border-radius:4px 4px 0 0}
 .overview .panel,.overview .embedded-panel{border-bottom:2px solid #a32f23;border-radius:0 0 4px 4px}
+
+/* Souvislé linky a stejné zaoblení rámů. */
+.overview header>div{border-bottom:0}
+.overview header>div::before{top:10px;bottom:0;border:2px solid var(--ui-border);border-top:0;border-radius:0 0 4px 4px}
+.overview .nav{border-radius:0 0 4px 4px}
+.overview .nav button[aria-current=true]{border-bottom-width:2px;border-radius:4px}
+.overview .nav button[aria-current=true]::after{left:0;right:0;bottom:-4px}
+.overview .nav::after{border-radius:4px 4px 0 0}
+.overview .panel,.overview .embedded-panel{border-radius:4px}
+.overview .filter-menu summary{border-width:2px}
