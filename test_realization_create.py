@@ -87,6 +87,40 @@ class CreationTests(unittest.TestCase):
             return self.request(path,params)
         with self.assertRaisesRegex(ValueError,'otevřená'):rc.prepare(42,closed)
 
+class SearchTests(unittest.TestCase):
+    def setUp(self):
+        self.issues=[{'id':141993,'subject':'Dodat do ŠJ Český Brod','project':{'id':5},'status':{'name':'Nový'}},
+                     {'id':232865,'subject':'Dodat do ŠJ Dubenec','project':{'id':5},'status':{'name':'Běžící'}}]
+    def request(self,path,params=None):
+        if path=='/projects/realizace.json':return {'project':{'id':5}}
+        if path=='/issues.json':
+            self.assertEqual(params['status_id'],'open');self.assertEqual(params['project_id'],5)
+            return {'issues':self.issues,'total_count':len(self.issues)}
+        raise AssertionError(path)
+    def test_search_by_partial_id_or_accent_insensitive_name(self):
+        self.assertEqual([x['id'] for x in rc.search('brod',self.request)['results']],[141993])
+        self.assertEqual([x['id'] for x in rc.search('#232',self.request)['results']],[232865])
+        self.assertEqual([x['id'] for x in rc.search('cesky',self.request)['results']],[141993])
+        self.assertEqual(rc.search('nenalezeno',self.request)['results'],[])
+    def test_short_query_and_wrong_project_rejected(self):
+        with self.assertRaises(ValueError):rc.search('x',self.request)
+        self.issues[0]['project']['id']=9
+        with self.assertRaisesRegex(ValueError,'ověřit'):rc.search('brod',self.request)
+    def test_search_traverses_pages_and_limits_result_count(self):
+        items=[{'id':1000+i,'subject':'Škola test','project':{'id':5},'status':{'name':'Nový'}} for i in range(105)]
+        offsets=[]
+        def paged(path,params=None):
+            if path=='/projects/realizace.json':return {'project':{'id':5}}
+            offsets.append(params['offset']);return {'issues':items[params['offset']:params['offset']+100],'total_count':len(items)}
+        result=rc.search('skola',paged)
+        self.assertEqual(offsets,[0,100]);self.assertEqual(len(result['results']),8);self.assertFalse(result['truncated'])
+
+    def test_incomplete_pagination_never_presents_partial_as_complete(self):
+        def incomplete(path,params=None):
+            if path=='/projects/realizace.json':return {'project':{'id':5}}
+            return {'issues':[],'total_count':1}
+        with self.assertRaisesRegex(ValueError,'neúplný'):rc.search('brod',incomplete)
+
 class ReadBoundaryTests(unittest.TestCase):
     def test_request_restricts_paths_and_disables_redirect(self):
         from io import BytesIO

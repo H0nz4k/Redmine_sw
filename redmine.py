@@ -608,6 +608,15 @@ class Handler(BaseHTTPRequestHandler):
         elif self.path in ('/vendor/leaflet/leaflet.js', '/vendor/leaflet/leaflet.css'):
             asset = Path(__file__).parent / self.path.lstrip('/')
             self.send(asset.read_bytes(), 'text/javascript; charset=utf-8' if self.path.endswith('.js') else 'text/css; charset=utf-8')
+        elif self.path.startswith('/api/realization-search?'):
+            try:
+                if not KEY: raise ValueError('Chybí REDMINE_API_KEY.')
+                query = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query).get('q', [''])[0]
+                self.send(realization_create.search(query, lambda path, params=None: realization_create.api_request(BASE, KEY, path, params)))
+            except ValueError as exc:
+                self.send({'error':str(exc)[:200]}, status=400)
+            except Exception:
+                self.send({'error':'Hledání realizací se nezdařilo.'}, status=502)
         elif re.fullmatch(r'/api/realization-job/[0-9a-f]{32}', self.path):
             try:
                 with connect() as db:

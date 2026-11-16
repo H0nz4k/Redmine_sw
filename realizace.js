@@ -14,11 +14,12 @@
     {id:'handover', title:'Ověřit funkčnost a předat zákazníkovi', owner:'honza', info:'Doporučená závěrečná kontrola před uzavřením.'}
   ];
   const $ = id => document.getElementById(id);
-  let context=null, pending=null, busy=false, reviewPlan=null;
+  let context=null, pending=null, busy=false, reviewPlan=null, selectedMatch=false, loadSeq=0;
   let saved = {};
   try { saved = JSON.parse(localStorage.getItem(key) || '{}') || {}; } catch (_) { saved = {}; }
   const state = {name:typeof saved.name==='string'?saved.name:'', parent:typeof saved.parent==='string'?saved.parent:'', equipment:Array.isArray(saved.equipment)?saved.equipment:[], choices:saved.choices && typeof saved.choices==='object'?saved.choices:{}, owners:saved.owners && typeof saved.owners==='object'?saved.owners:{}};
   pending=saved.pending && typeof saved.pending==='object' ? saved.pending : null;
+  selectedMatch=Boolean(state.name && state.parent);
   $('real-name').value=state.name;
   $('real-parent').value=state.parent;
   const equipment=Array.from(document.querySelectorAll('.realization-equipment input'));
@@ -55,10 +56,35 @@
       input.setAttribute('aria-label','Řešitel: '+task.title);assignee.append(input);row.append(label,assignee);list.append(row);
     });updateOutput();
   }
-  for(const [id,field] of [['real-name','name'],['real-parent','parent']]) $(id).addEventListener('input',e=>{state[field]=e.target.value;if(field==='parent'){context=null;$('real-existing').hidden=true;$('real-load-status').textContent='';render();}updateOutput();persist();});
+  for(const [id,field] of [['real-name','name'],['real-parent','parent']]) $(id).addEventListener('input',e=>{
+    if(context||selectedMatch){if(field==='name'){state.parent='';$('real-parent').value='';}else{state.name='';$('real-name').value='';}}
+    state[field]=e.target.value;loadSeq++;selectedMatch=false;context=null;$('real-existing').hidden=true;$('real-load-status').textContent='';render();updateOutput();persist();
+  });
+  let searchSeq=0,searchTimer=null;
+  function hideSuggestions(){searchSeq++;clearTimeout(searchTimer);for(const id of ['real-name','real-parent']){const field=$(id);field.setAttribute('aria-expanded','false');field.removeAttribute('aria-activedescendant');$(id+'-results').hidden=true;} $('real-search-status').textContent='';}
+  function suggest(field) {
+    const value=field.value.trim();hideSuggestions();if(pending||busy)return;
+    if(value.replace(/^#/, '').length<2){if(value)$('real-search-status').textContent='Pro hledání zadej alespoň dva znaky.';return;}
+    const sequence=searchSeq,results=$(field.id+'-results');$('real-search-status').textContent='Hledám otevřené realizace…';
+    searchTimer=setTimeout(async()=>{
+      try{
+        const response=await apiFetch('/api/realization-search?q='+encodeURIComponent(value));const result=await response.json();if(!response.ok)throw Error(result.error||'Hledání se nezdařilo.');
+        if(sequence!==searchSeq||field.value.trim()!==value||document.activeElement!==field)return;
+        results.replaceChildren();const rows=Array.isArray(result.results)?result.results:[];let active=0;
+        const activate=index=>{active=index;Array.from(results.children).forEach((item,i)=>item.setAttribute('aria-selected',String(i===active)));if(results.children[active])field.setAttribute('aria-activedescendant',results.children[active].id);};
+        const choose=item=>{if(pending||busy)return;loadSeq++;state.name=item.subject;state.parent=String(item.id);selectedMatch=true;$('real-name').value=state.name;$('real-parent').value=state.parent;context=null;$('real-existing').hidden=true;$('real-load-status').textContent='Vybráno. Načti realizaci a řešitele.';hideSuggestions();render();persist();$('real-load').focus();};
+        rows.forEach((item,i)=>{const li=document.createElement('li');li.id=field.id+'-option-'+i;li.setAttribute('role','option');li.setAttribute('aria-selected','false');const number=document.createElement('strong');number.textContent='#'+item.id;const title=document.createElement('span');title.textContent=item.subject;li.append(number,title);if(item.status){const status=document.createElement('small');status.textContent=item.status;li.append(status);}li.addEventListener('pointerdown',e=>e.preventDefault());li.addEventListener('click',()=>choose(item));results.append(li);});
+        if(!rows.length){$('real-search-status').textContent=result.truncated?'Ve zpracované části nejsou výsledky; hledání nezahrnulo všechny realizace.':'Žádné otevřené realizace neodpovídají.';return;}
+        results.hidden=false;field.setAttribute('aria-expanded','true');activate(0);$('real-search-status').textContent=(result.truncated?'Prohledána jen část realizací. ':'')+`Nalezené možnosti: ${rows.length}.`;
+        field._realizationKeys=e=>{if(results.hidden)return;if(e.key==='ArrowDown'||e.key==='ArrowUp'){e.preventDefault();activate((active+(e.key==='ArrowDown'?1:rows.length-1))%rows.length);results.children[active].scrollIntoView({block:'nearest'});}else if(e.key==='Enter'){e.preventDefault();choose(rows[active]);}else if(e.key==='Escape'){e.preventDefault();hideSuggestions();}};
+      }catch(err){if(sequence===searchSeq){results.hidden=true;field.setAttribute('aria-expanded','false');$('real-search-status').textContent='Hledání se nezdařilo: '+err.message;}}
+    },300);
+  }
+  for(const id of ['real-name','real-parent']){const field=$(id);field.addEventListener('input',()=>suggest(field));field.addEventListener('focus',()=>{if(field.value.trim())suggest(field);});field.addEventListener('keydown',e=>field._realizationKeys?.(e));field.addEventListener('blur',()=>setTimeout(()=>{if(!document.activeElement?.closest('.realization-search'))hideSuggestions();},100));}
+
   equipment.forEach(input=>input.addEventListener('change',()=>{state.equipment=equipment.filter(x=>x.checked).map(x=>x.value);render();persist();}));
   $('real-select').addEventListener('click',()=>{$('real-output').focus();$('real-output').select();$('real-save-status').textContent='Text je vybraný; zkopíruj jej pomocí Ctrl+C.';});
-  $('real-clear').addEventListener('click',()=>{if (pending && !window.confirm('Tento návrh má odeslaný požadavek. Nejprve ověřte výsledek v Redmine. Opravdu odstranit záznam o tomto pokusu?')) return; if (!window.confirm('Zahodit rozpracovaný návrh a začít nový?')) return; pending=null;context=null;$('real-existing').hidden=true;$('real-result').textContent='';$('real-load-status').textContent=''; state.name='';state.parent='';state.equipment=[];state.choices={};state.owners={};$('real-name').value='';$('real-parent').value='';equipment.forEach(input=>{input.checked=false;});render();persist();$('real-name').focus();});
+  $('real-clear').addEventListener('click',()=>{if (pending && !window.confirm('Tento návrh má odeslaný požadavek. Nejprve ověřte výsledek v Redmine. Opravdu odstranit záznam o tomto pokusu?')) return; if (!window.confirm('Zahodit rozpracovaný návrh a začít nový?')) return; pending=null;context=null;loadSeq++;selectedMatch=false;hideSuggestions();$('real-existing').hidden=true;$('real-result').textContent='';$('real-load-status').textContent=''; state.name='';state.parent='';state.equipment=[];state.choices={};state.owners={};$('real-name').value='';$('real-parent').value='';equipment.forEach(input=>{input.checked=false;});render();persist();$('real-name').focus();});
   function showResult(result) {
     const box=$('real-result');box.replaceChildren();
     const head=document.createElement('strong');head.textContent=result.state==='complete'?'Všechny úkoly byly ověřeny v Redmine.':'Založení není dokončeno. Neověřené a neodeslané úkoly zkontroluj v Redmine.';box.append(head);
@@ -69,9 +95,9 @@
   $('real-load').addEventListener('click',async()=>{
     if(pending){$('real-load-status').textContent='Nejdřív ověř stav předchozího založení.';return;}
     if(!/^[1-9][0-9]{0,11}$/.test(state.parent.trim())){$('real-load-status').textContent='Zadej číslo nadřazené realizace.';return;}
-    const parent=state.parent.trim();$('real-load').disabled=true;$('real-load-status').textContent='Načítám realizaci a členy projektu…';
-    try{const response=await apiFetch('/api/realization-prepare/'+parent),value=await response.json();if(!response.ok)throw Error(value.error||'Načtení se nezdařilo.');if(state.parent.trim()!==parent)return;context=value;$('real-load-status').textContent=`#${value.id} · ${value.subject} · ${value.members.length} řešitelů`;const existing=$('real-existing');existing.replaceChildren();const heading=document.createElement('strong');heading.textContent='Již existující dílčí úkoly';existing.append(heading);const ul=document.createElement('ul');value.children.forEach(c=>{const li=document.createElement('li');li.textContent='#'+c.id+' '+c.subject;ul.append(li)});if(!value.children.length){const li=document.createElement('li');li.textContent='Žádné';ul.append(li)}existing.append(ul);existing.hidden=false;render();}
-    catch(e){context=null;render();$('real-load-status').textContent='Načtení se nezdařilo: '+e.message;}finally{$('real-load').disabled=false;}
+    const parent=state.parent.trim(),sequence=++loadSeq;$('real-load').disabled=true;$('real-load-status').textContent='Načítám realizaci a členy projektu…';
+    try{const response=await apiFetch('/api/realization-prepare/'+parent),value=await response.json();if(!response.ok)throw Error(value.error||'Načtení se nezdařilo.');if(sequence!==loadSeq||state.parent.trim()!==parent)return;context=value;$('real-load-status').textContent=`#${value.id} · ${value.subject} · ${value.members.length} řešitelů`;const existing=$('real-existing');existing.replaceChildren();const heading=document.createElement('strong');heading.textContent='Již existující dílčí úkoly';existing.append(heading);const ul=document.createElement('ul');value.children.forEach(c=>{const li=document.createElement('li');li.textContent='#'+c.id+' '+c.subject;ul.append(li)});if(!value.children.length){const li=document.createElement('li');li.textContent='Žádné';ul.append(li)}existing.append(ul);existing.hidden=false;render();}
+    catch(e){if(sequence===loadSeq){context=null;render();$('real-load-status').textContent='Načtení se nezdařilo: '+e.message;}}finally{$('real-load').disabled=false;}
   });
   $('real-create').addEventListener('click',()=>{
     const active=tasks.filter(t=>relevant(t)&&selected(t));if(!context||pending||!active.length||active.some(t=>!member(t)))return;

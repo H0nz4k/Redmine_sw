@@ -3,6 +3,7 @@ import hashlib
 import json
 import re
 import threading
+import unicodedata
 import urllib.error
 import urllib.request
 import urllib.parse
@@ -15,7 +16,7 @@ def api_request(base, key, path, params=None):
     params = params or {}
     allowed = {'/projects/realizace.json':set(), '/issue_statuses.json':set(),
                '/projects/realizace/memberships.json':{'limit','offset'},
-               '/issues.json':{'project_id','parent_id','status_id','limit','offset'}}
+               '/issues.json':{'project_id','parent_id','subproject_id','status_id','limit','offset'}}
     if re.fullmatch(r'/issues/[1-9][0-9]{0,11}\.json',path):
         permitted={'include'}
         if params.get('include') not in (None,'children'): raise ValueError('Nepovolený požadavek.')
@@ -28,6 +29,39 @@ def api_request(base, key, path, params=None):
     req=urllib.request.Request(url,headers={'X-Redmine-API-Key':key,'Accept':'application/json'})
     with urllib.request.build_opener(NoRedirect()).open(req,timeout=30) as response:
         return json.load(response)
+
+
+def search(query, request):
+    """Find visible open realization issues by subject or partial issue ID."""
+    if not isinstance(query,str): raise ValueError('Neplatný hledaný výraz.')
+    query=query.strip().lstrip('#').strip()
+    if not 2 <= len(query) <= 80: raise ValueError('Zadejte 2 až 80 znaků.')
+    def fold(value):
+        return ''.join(c for c in unicodedata.normalize('NFKD',value.casefold()) if not unicodedata.combining(c))
+    term=fold(query)
+    project=request('/projects/realizace.json')['project']
+    pid=project.get('id')
+    if type(pid) is not int or pid<=0: raise ValueError('Nelze ověřit projekt Realizace.')
+    offset=0; matches=[]; seen=set(); total=None; truncated=False
+    while True:
+        page=request('/issues.json',{'project_id':pid,'subproject_id':'!*','status_id':'open','limit':100,'offset':offset})
+        items,count=page.get('issues'),page.get('total_count')
+        if not isinstance(items,list) or type(count) is not int or count<0 or (total is not None and total!=count):
+            raise ValueError('Redmine neposkytl úplný seznam realizací.')
+        total=count
+        for issue in items:
+            iid=issue.get('id'); subject=issue.get('subject')
+            if type(iid) is not int or iid<=0 or not isinstance(subject,str) or issue.get('project',{}).get('id')!=pid or iid in seen:
+                raise ValueError('Nelze ověřit výsledky z projektu Realizace.')
+            seen.add(iid)
+            if term in fold(subject) or term in str(iid):
+                matches.append({'id':iid,'subject':subject,'status':issue.get('status',{}).get('name','')})
+        offset+=len(items)
+        if offset>=total: break
+        if not items: raise ValueError('Seznam realizací je neúplný.')
+        if offset>=1000: truncated=True;break
+    matches.sort(key=lambda row:(not str(row['id']).startswith(term), not fold(row['subject']).startswith(term), -row['id']))
+    return {'results':matches[:8],'truncated':truncated}
 
 
 def prepare(parent_id, request):
