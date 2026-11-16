@@ -86,3 +86,16 @@ html[data-theme=dark] .overview .nav button[aria-current=true]{color:#ffd1c8!imp
 .overview .nav{max-width:1440px;margin:0 auto;padding-left:24px;padding-right:24px}
 .overview .panel{border-left:1px solid #a32f23;border-right:1px solid #a32f23}html[data-theme=dark] .overview .panel{border-color:#ff9b8f}
 @media(max-width:750px){.overview .nav{padding-left:8px;padding-right:8px}.page-identity{gap:10px}.page-title{padding-left:10px}}
+
+/* Mapa a denní přehled zůstávají v jedné navigaci; samostatné stránky stále fungují. */
+.overview .embedded-panel{max-width:1440px;margin:0 auto;border-left:1px solid #a32f23;border-right:1px solid #a32f23}
+html[data-theme=dark] .overview .embedded-panel{border-color:#ff9b8f}
+.overview .embedded-panel[hidden],.overview .panel[hidden]{display:none!important}
+.overview .embedded-panel iframe{display:block;width:100%;height:calc(100dvh - 130px);min-height:480px;border:0;background:var(--ui-bg)}
+html.embedded-view .map-page header .page-identity,html.embedded-view .map-page header .header-actions a,html.embedded-view .digest-page header{display:none}
+html.embedded-view .map-page header>div{justify-content:flex-end;padding-top:8px;padding-bottom:8px}
+@media(max-width:750px){.overview .embedded-panel iframe{height:75dvh;min-height:480px}}
+
+/* Vnější okraje jsou plochou hlavičky; obsah zůstává odlišený. */
+body.overview{min-height:100vh;background:var(--ui-surface)!important}
+.overview .panel,.overview .embedded-panel{background:var(--ui-bg)}

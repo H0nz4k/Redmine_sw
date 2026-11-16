@@ -5,6 +5,7 @@
   const apply=()=>{const root=document.documentElement;root.style.setProperty('--ui-size',state.size+'px');root.dataset.bold=String(state.bold);root.dataset.theme=state.theme;};
   const save=()=>{apply();try{localStorage.setItem('redmine-appearance-v1',JSON.stringify(state));}catch(_){}};
   apply();
+  window.addEventListener("storage",event=>{if(event.key!=="redmine-appearance-v1")return;try{const v=JSON.parse(event.newValue||"{}");state={size:[13,14,16,18].includes(v.size)?v.size:defaults.size,bold:typeof v.bold==="boolean"?v.bold:defaults.bold,theme:["light","blue","dark"].includes(v.theme)?v.theme:defaults.theme};apply();}catch(_){} });
   document.addEventListener('DOMContentLoaded',()=>{
     const panel=document.querySelector('#appearance-settings');if(!panel)return;
     function sync(){panel.querySelectorAll('[data-size]').forEach(b=>b.setAttribute('aria-pressed',String(Number(b.dataset.size)===state.size)));panel.querySelectorAll('[data-theme-choice]').forEach(b=>b.setAttribute('aria-pressed',String(b.dataset.themeChoice===state.theme)));panel.querySelector('#appearance-bold').checked=state.bold;}
