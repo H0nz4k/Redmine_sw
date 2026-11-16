@@ -151,3 +151,20 @@ html[data-theme=dark] .overview .nav button[aria-current=true]{border-top-color:
 
 .overview #update-ready{min-height:40px;padding:6px 10px;border:2px solid var(--ui-accent);background:var(--ui-surface);color:var(--ui-accent);white-space:nowrap}
 .overview #update-ready[hidden]{display:none}
+
+/* Příprava realizace */
+.overview .realization-panel{max-width:1440px;margin:0 auto;padding:24px;background:var(--ui-bg);border:2px solid var(--ui-accent);border-top:0;border-radius:0 0 4px 4px}
+.overview .realization-panel[hidden]{display:none}
+.realization-heading,.realization-list-header{display:flex;justify-content:space-between;align-items:baseline;gap:16px;flex-wrap:wrap}
+.realization-heading h2,.realization-list-header h3,.realization-output h3{margin:0;color:var(--ui-text)}
+.realization-heading p,.realization-list-header p,.realization-output p{margin:5px 0 0;color:var(--ui-muted)}
+.draft-label{color:var(--ui-muted);font-weight:600}
+.realization-fields{display:grid;grid-template-columns:minmax(0,2fr) minmax(200px,1fr);gap:12px;margin-top:20px}
+.realization-fields label,.realization-owner{display:flex;flex-direction:column;gap:5px;color:var(--ui-muted);font-weight:600}
+.realization-fields label span{font-weight:400}
+.realization-fields input,.realization-owner input,.realization-output textarea{width:100%;color:var(--ui-text);background:var(--ui-surface);border:1px solid var(--ui-border);border-radius:4px;padding:8px 10px}
+.realization-equipment{margin:20px 0;padding:0;border:0;display:flex;gap:8px 18px;flex-wrap:wrap}.realization-equipment legend{margin-bottom:8px;color:var(--ui-text);font-weight:700}.realization-equipment label{display:flex;align-items:center;gap:6px;min-height:32px}.realization-panel input[type=checkbox]{width:19px;height:19px;min-height:0;accent-color:var(--ui-accent)}
+.realization-list-header{padding:14px 0 10px;border-top:1px solid var(--ui-border)}.realization-list-header h3,.realization-output h3{font-size:calc(var(--ui-size) + 2px)}
+.realization-tasks{border-top:1px solid var(--ui-border)}.realization-task{display:grid;grid-template-columns:minmax(0,1fr) 160px;align-items:center;gap:12px;padding:10px 0;border-bottom:1px solid var(--ui-border)}.realization-task-label{display:flex;align-items:flex-start;gap:10px;min-width:0}.realization-task-label input{flex:none;margin:3px 0 0}.realization-task-label strong,.realization-task-label small{display:block}.realization-task-label small{margin-top:3px;color:var(--ui-muted);font-size:calc(var(--ui-size) - 1px)}.realization-owner{font-size:calc(var(--ui-size) - 1px)}.realization-owner input{min-height:38px}
+.realization-output{margin-top:22px}.realization-output textarea{display:block;min-height:150px;margin-top:10px;resize:vertical;line-height:1.5}.realization-actions{display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-top:10px}.realization-actions button{background:var(--ui-surface);color:var(--ui-text);border:1px solid var(--ui-border)}.realization-actions a{color:var(--ui-accent)}#real-save-status{color:var(--ui-muted)}
+@media(max-width:600px){.overview .realization-panel{padding:16px}.realization-fields{grid-template-columns:1fr}.realization-task{grid-template-columns:1fr;gap:6px}.realization-owner{padding-left:29px}.realization-owner input{max-width:240px}}
