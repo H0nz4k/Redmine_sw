@@ -22,6 +22,7 @@ from suggestions import customer_suggestions
 from triage import analyze_issue
 import daily_digest
 import henk_redaction
+import realization_create
 
 BASE = os.environ.get('REDMINE_URL', 'https://redmine.altisima.cz').rstrip('/')
 KEY = os.environ.get('REDMINE_API_KEY', '')
@@ -41,7 +42,7 @@ def app_version():
     root = Path(__file__).resolve().parent
     name = (root / 'VERSION').read_text(encoding='utf-8').strip() if (root / 'VERSION').exists() else 'unversioned'
     fingerprint = hashlib.sha256()
-    for filename in ('VERSION', 'redmine.py', 'index.html', 'triage.py', 'daily_digest.py', 'denni-prehled.html', 'henk_digest.py', 'henk_mcp.py', 'henk_redaction.py', 'appearance.css', 'appearance.js', 'realizace.js'):
+    for filename in ('VERSION', 'redmine.py', 'index.html', 'triage.py', 'daily_digest.py', 'denni-prehled.html', 'henk_digest.py', 'henk_mcp.py', 'henk_redaction.py', 'appearance.css', 'appearance.js', 'realizace.js', 'realization_create.py'):
         path = root / filename
         if path.exists():
             fingerprint.update(filename.encode('utf-8') + b'\0' + path.read_bytes())
@@ -607,6 +608,20 @@ class Handler(BaseHTTPRequestHandler):
         elif self.path in ('/vendor/leaflet/leaflet.js', '/vendor/leaflet/leaflet.css'):
             asset = Path(__file__).parent / self.path.lstrip('/')
             self.send(asset.read_bytes(), 'text/javascript; charset=utf-8' if self.path.endswith('.js') else 'text/css; charset=utf-8')
+        elif re.fullmatch(r'/api/realization-job/[0-9a-f]{32}', self.path):
+            try:
+                with connect() as db:
+                    db.execute('CREATE TABLE IF NOT EXISTS realization_jobs (id TEXT PRIMARY KEY, plan_hash TEXT NOT NULL, result TEXT NOT NULL)')
+                    row = db.execute('SELECT result FROM realization_jobs WHERE id=?', (self.path.rsplit('/', 1)[1],)).fetchone()
+                self.send(json.loads(row[0]) if row else {'error':'Záznam o odeslání není k dispozici; ověřte Redmine.'}, status=200 if row else 404)
+            except Exception:
+                self.send({'error':'Stav nelze načíst.'}, status=500)
+        elif re.fullmatch(r'/api/realization-prepare/[1-9][0-9]{0,11}', self.path):
+            try:
+                if not KEY: raise ValueError('Chybí REDMINE_API_KEY.')
+                self.send(realization_create.prepare(int(self.path.rsplit('/', 1)[1]), lambda path, params=None: realization_create.api_request(BASE, KEY, path, params)))
+            except Exception as exc:
+                self.send({'error': str(exc)[:300]}, status=400)
         elif self.path == '/api/scan-status':
             self.send(dict(scan_state))
         elif self.path == '/api/customers':
@@ -658,7 +673,16 @@ class Handler(BaseHTTPRequestHandler):
         if self.headers.get('Origin') not in allowed:
             self.send({'error':'Nepovolený původ'}, status=403); return
         try:
-            if self.path.startswith('/api/close-issue/'):
+            if self.path == '/api/realization-create':
+                if self.headers.get('Origin') is None or self.headers.get_content_type() != 'application/json':
+                    self.send({'error': 'Nepovolený požadavek.'}, status=403); return
+                length = int(self.headers.get('Content-Length', '0'))
+                if not 0 < length <= 16384: raise ValueError('Neplatný požadavek.')
+                if not KEY: raise ValueError('Chybí REDMINE_API_KEY.')
+                body = json.loads(self.rfile.read(length))
+                self.send(realization_create.create_batch(body, lambda path, params=None: realization_create.api_request(BASE, KEY, path, params), connect,
+                    lambda issue: realization_create.create_http(BASE, KEY, issue)))
+            elif self.path.startswith('/api/close-issue/'):
                 if self.headers.get('Origin') is None or self.headers.get_content_type() != 'application/json':
                     self.send({'error': 'Nepovolený požadavek.'}, status=403); return
                 length = int(self.headers.get('Content-Length', '0'))
