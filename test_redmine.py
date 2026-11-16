@@ -206,6 +206,25 @@ class SyncTests(unittest.TestCase):
             self.assertTrue(redmine.apply_helpdesk_change(22, 'customer', 123, 'v1', redmine.helpdesk_state_token(issue))['ok'])
             write.assert_called_once_with('/issues/22/relations.json', 'POST', {'relation': {'issue_to_id': 123, 'relation_type': 'relates'}})
 
+    def test_hw_assignee_is_honza_not_api_account(self):
+        issue = {'id': 22, 'project': {'id': 12}, 'subject': 'Rozbitý terminál',
+                 'updated_on': 'v1', 'relations': []}
+        def advice(members, item=issue):
+            with patch.object(redmine, 'request', return_value={'issue': item}), \
+                 patch.object(redmine, 'matching_customers', return_value=[]), \
+                 patch.object(redmine, 'helpdesk_members', return_value=members), \
+                 patch.object(redmine, 'find_issue_customers', return_value=[]):
+                return redmine.helpdesk_suggestions(22)
+        members = [{'id': 7, 'name': 'servis'}, {'id': 9, 'name': 'honza'}]
+        self.assertEqual(advice(members)['assignee_suggestion']['id'], 9)
+        for invalid in ([{'id': 7, 'name': 'servis'}],
+                        [{'id': 9, 'name': 'honza'}, {'id': 10, 'name': 'HONZA'}]):
+            result = advice(invalid)
+            self.assertIsNone(result['assignee_suggestion'])
+            self.assertIn('nelze jednoznačně', result['assignee_unavailable_reason'])
+        no_hw = dict(issue, subject='Faktura')
+        self.assertIsNone(advice(members, no_hw)['assignee_suggestion'])
+
     def test_customer_match_is_local_and_explained(self):
         from suggestions import customer_suggestions
         candidates = [{'id': 4, 'name': 'ZŠ Nové Město'}, {'id': 5, 'name': 'Město'}]

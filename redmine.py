@@ -342,14 +342,15 @@ def helpdesk_suggestions(iid):
         raise ValueError('Nejde o požadavek projektu Helpdesk.')
     all_customers = matching_customers()
     members = helpdesk_members()
-    current = request('/users/current.json')['user']
     reasons = classify(issue)
-    person = next((m for m in members if m['id'] == current['id']), None) if reasons else None
+    matches = [m for m in members if str(m.get('name', '')).strip().casefold() == 'honza']
+    person = matches[0] if reasons and len(matches) == 1 else None
     return {'issue_id': iid, 'updated_on': issue['updated_on'], 'state_token': helpdesk_state_token(issue), 'subject': issue.get('subject', ''),
             'assigned_to': issue.get('assigned_to'), 'linked_customers': find_issue_customers(iid),
             'customer_candidates': customer_suggestions(issue.get('subject', ''), issue.get('description', ''), all_customers),
             'assignee_suggestion': {'id': person['id'], 'name': person['name'],
                                     'reason': 'Možný hardware: ' + ', '.join(reasons)} if person else None,
+            'assignee_unavailable_reason': ('Účet honza nelze jednoznačně ověřit mezi členy Helpdesku.' if reasons and len(matches) != 1 else ''),
             'members': members}
 
 
