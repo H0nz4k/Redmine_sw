@@ -99,3 +99,13 @@ html.embedded-view .map-page header>div{justify-content:flex-end;padding-top:8px
 /* Vnější okraje jsou plochou hlavičky; obsah zůstává odlišený. */
 body.overview{min-height:100vh;background:var(--ui-surface)!important}
 .overview .panel,.overview .embedded-panel{background:var(--ui-bg)}
+
+/* Jemné ukončení hlavičky a návaznost rámu při posouvání. */
+.overview header>div{position:relative}
+.overview header>div::before{content:"";position:absolute;top:10px;bottom:10px;left:0;right:0;border-left:2px solid var(--ui-border);border-right:2px solid var(--ui-border);pointer-events:none}
+.overview .brand-mark{width:42px;height:42px}
+.overview .brand-link{font-size:calc(var(--ui-size) + 6px)}
+.overview .panel,.overview .embedded-panel{border-left-width:2px;border-right-width:2px}
+.overview .nav::after{content:"";position:absolute;left:0;right:0;bottom:-12px;height:10px;box-sizing:border-box;background:var(--ui-bg);border-left:2px solid #a32f23;border-right:2px solid #a32f23;pointer-events:none}
+html[data-theme=dark] .overview .nav::after{border-color:#ff9b8f}
+@media(max-width:750px){.overview .brand-mark{width:36px;height:36px}.overview .brand-link{font-size:calc(var(--ui-size) + 4px)}}
