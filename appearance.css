@@ -138,3 +138,13 @@ html[data-theme=dark] .overview .nav button[aria-current=true]{border-top-color:
 .overview .nav button:not([aria-current=true]):not(:last-child)::before{content:"";position:absolute;right:-1px;top:10px;bottom:10px;width:2px;background:var(--ui-border);pointer-events:none}
 .overview .nav button:not([aria-current=true]):has(+button[aria-current=true])::before{display:none}
 @media(max-width:750px){.overview header>div{padding-left:18px;padding-right:18px}.overview header>div::before{left:8px;right:8px}.overview .nav button:not([aria-current=true])::before{display:none}}
+
+/* Přepnutí pořadí dle data přijetí. */
+.overview .sort-order{display:inline-flex;align-items:center;justify-content:center;align-self:stretch;flex:0 0 44px;min-height:44px;padding:8px;border:2px solid var(--ui-border);border-radius:4px;background:var(--ui-surface);color:var(--ui-text)}
+.overview .sort-order:hover{background:var(--ui-hover)}
+.overview .sort-order svg{width:20px;height:20px;fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
+.overview .sort-order.oldest-first svg{transform:rotate(180deg)}
+@media(max-width:850px){.overview .sort-order{align-self:center;min-height:44px}}
+
+.brief-dialog-foot{display:flex;justify-content:flex-end;margin-top:16px;padding-top:12px;border-top:1px solid var(--ui-border)}
+.brief-dialog-foot button{background:var(--ui-surface);color:var(--ui-text);border-color:var(--ui-border)}
