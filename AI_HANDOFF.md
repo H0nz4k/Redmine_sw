@@ -41,3 +41,7 @@ Přesné soubory, konfigurace, postup a omezení jsou v `henk-runtime/DEPLOYMENT
 Nasazení přidalo tabulky pro AI výsledky a požadavky. Návrat obnoví čtyři původní soubory, odstraní jen nově přidané soubory a drop-iny a restartuje původní služby; databázi, přidané tabulky, historii, reporty ani tajné soubory nepřepisuje. Obnova databázového snapshotu by mohla ztratit novější data a vyžaduje samostatný souhlas. Starší úloha ve stavu `OUTCOME_UNKNOWN` byla ponechána beze změny; nesmí se opakovat s novým UUID.
 
 Automatická kontrola v předchozím kroku odmítla převzetí Redmine klíče z `/proc/<PID>/environ`; tento způsob nebyl použit. Uživatel následně místně poskytl oddělený root-only čtecí klíč, který byl použit pro čerstvý izolovaný test. Tento čtecí klíč není součástí produkční konfigurace nasazení.
+
+## Denní přehled – změny v období (16. 11. 2026)
+
+Ve větvi `feature/close-issue-overview` je upraven výběr podkladů: u starších úkolů jen journal a nové komentáře z období, změny stavů deterministicky podle Redmine, bez modelu při pouhé změně. Metadata stavů jsou volitelná, chybějící hodnoty mají fallback na ID. Staré reporty a data zůstávají zachovány. Syntetický kontext je kompatibilní s nasazeným Henkovým adaptérem; aktuální implementace nebyla ověřena na živých datech ani nasazena. Podrobnosti kandidáta a podmínky v `release-candidate/DEPLOYMENT_PLAN.md` (lokální necommitovaný artefakt).

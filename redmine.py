@@ -62,7 +62,7 @@ class _DigestNoRedirect(urllib.request.HTTPRedirectHandler):
 
 
 def digest_request(path, params=None):
-    """Only Redmine issue/project text endpoints; never follow redirects."""
+    """Only Redmine issue, project and status endpoints; never follow redirects."""
     params = params or {}
     if path == '/issues.json':
         allowed = {'status_id', 'updated_on', 'created_on', 'project_id', 'limit', 'offset'}
@@ -70,6 +70,8 @@ def digest_request(path, params=None):
             raise ValueError('Nepovolený projekt hlasového přehledu.')
     elif path == '/projects.json':
         allowed = {'limit', 'offset'}
+    elif path == '/issue_statuses.json':
+        allowed = set()
     elif re.fullmatch(r'/issues/[1-9][0-9]*\.json', path):
         if params != {'include': 'journals'}:
             raise ValueError('Nepovolené parametry historie Redmine.')

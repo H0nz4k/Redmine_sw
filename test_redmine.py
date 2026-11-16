@@ -9,7 +9,8 @@ class DigestSourceBoundaryTests(unittest.TestCase):
     def test_digest_request_allows_only_text_endpoints_without_redirects(self):
         from io import BytesIO
         for path, params in [('/attachments/2', {}), ('/issues/1.json', {'include': 'attachments'}),
-                             ('https://example.invalid/file', {}), ('/projects.json', {'include': 'attachments'})]:
+                             ('https://example.invalid/file', {}), ('/projects.json', {'include': 'attachments'}),
+                             ('/issue_statuses.json', {'include': 'attachments'})]:
             with self.subTest(path=path, params=params):
                 with patch.object(redmine.urllib.request, 'build_opener') as opener:
                     with self.assertRaises(ValueError):
@@ -22,6 +23,10 @@ class DigestSourceBoundaryTests(unittest.TestCase):
             self.assertTrue(any(isinstance(h, redmine._DigestNoRedirect) for h in handlers))
             req = opener.return_value.open.call_args.args[0]
             self.assertTrue(req.full_url.endswith('/issues/1.json?include=journals'))
+        with patch.object(redmine.urllib.request, 'build_opener') as opener:
+            opener.return_value.open.return_value = BytesIO(b'{"issue_statuses":[]}')
+            self.assertEqual(redmine.digest_request('/issue_statuses.json', {}), {'issue_statuses': []})
+            self.assertTrue(opener.return_value.open.call_args.args[0].full_url.endswith('/issue_statuses.json'))
         self.assertIsNone(redmine._DigestNoRedirect().redirect_request(None, None, 302, None, None, 'https://example.invalid/attachments/1'))
 
 

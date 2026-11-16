@@ -86,6 +86,19 @@ def _projects(request):
             return result
 
 
+def _issue_status_names(request):
+    """Resolve public status IDs when available; missing metadata is nonfatal."""
+    try:
+        statuses = request('/issue_statuses.json', {}).get('issue_statuses')
+        if not isinstance(statuses, list):
+            return {}
+        return {str(item['id']): _clean(item['name']) for item in statuses
+                if isinstance(item, dict) and type(item.get('id')) is int and item['id'] > 0
+                and isinstance(item.get('name'), str) and _clean(item['name'])}
+    except (OSError, ValueError, TypeError, KeyError, IndexError, AttributeError):
+        return {}
+
+
 def _clean(text):
     # Redmine text never becomes HTML; remove Markdown link-control characters.
     return re.sub(r"[\[\]<>\r\n]", " ", str(text or "")).replace("|", " ").strip()[:180]
@@ -133,13 +146,14 @@ def _stories(events, contexts):
         project, subject = first["project"], first["subject"]
         link = "[#" + str(issue_id) + " – " + subject.replace("(", " ").replace(")", " ") + "](" + first["url"] + ")"
         author = context.get("author", "")
-        if any(e["kind"] == "new" for e in changes):
+        is_new = any(e["kind"] == "new" for e in changes)
+        if is_new:
             opening = ("V projektu " + project + " přibyl požadavek " + link +
                        (", který zadal(a) " + author if author else "") + ".")
         else:
-            opening = "V projektu " + project + " se řešil požadavek " + link + "."
+            opening = "V projektu " + project + " byl aktualizován požadavek " + link + "."
         sentences = [opening]
-        description = _digest_excerpt(context.get("description"), 180)
+        description = _digest_excerpt(context.get("description"), 180) if is_new and context.get("snapshot_safe", False) else ""
         if description:
             sentences.append("Zadání uvádí: " + description + ".")
         notes = context.get("notes", [])
@@ -154,7 +168,7 @@ def _stories(events, contexts):
         elif any(e["kind"] == "change" for e in changes) and not notes:
             sentences.append("Během dne došlo k aktualizaci úkolu; podrobnosti jsou v odkazu.")
         if not description and not notes:
-            sentences.append("Podrobnější popis ani komentáře pro toto období nejsou dostupné.")
+            sentences.append("K této změně není uveden nový komentář.")
         paragraphs.append(" ".join(sentences))
     return paragraphs
 
@@ -179,6 +193,7 @@ def _collect(start, end, issues, request, base, previous_projects):
         contexts[int(item["id"])] = {
             "author": _clean(detail.get("author", item.get("author", {})).get("name")),
             "description": detail.get("description") or item.get("description") or "",
+            "snapshot_safe": bool(detail.get("updated_on") or item.get("updated_on")) and _utc(detail.get("updated_on") or item.get("updated_on")) <= end,
             "notes": [],
             "henk_source": {
                 "id": int(item["id"]),
@@ -279,7 +294,7 @@ def _markdown(events, start, end, contexts=None):
     return "\n".join(parts)
 
 
-def _save_private_henk_source(day, start, end, events, contexts):
+def _save_private_henk_source(day, start, end, events, contexts, status_names=None):
     """Store complete source material off-web for a later local Henk analysis.
 
     Only issue IDs with an event in this report are included. Source descriptions
@@ -298,6 +313,7 @@ def _save_private_henk_source(day, start, end, events, contexts):
         "period_end_utc": _stamp(end),
         "captured_at_utc": _stamp(datetime.now(timezone.utc)),
         "description_note": "Popis je snímek v čase načtení, nikoliv historická verze.",
+        "issue_status_names": status_names or {},
         "issues": [
             contexts[iid]["henk_source"]
             for iid in changed_ids if iid in contexts
@@ -352,7 +368,14 @@ def generate(connect, issues, request, base, now=None):
         events, current_projects, contexts = _collect(start, end, issues, request, base, projects)
         markdown = _markdown(events, start, end, contexts)
         REPORT_DIR.mkdir(mode=0o700, parents=True, exist_ok=True)
-        private_source = _save_private_henk_source(day, start, end, events, contexts)
+        has_status_change = any(
+            d.get('name') == 'status_id'
+            for context in contexts.values() for j in context['henk_source']['journals']
+            if start <= _utc(j['created_on']) <= end
+            for d in j.get('details', []) if isinstance(d, dict)
+        )
+        status_names = _issue_status_names(request) if has_status_change else {}
+        private_source = _save_private_henk_source(day, start, end, events, contexts, status_names)
         model = os.getenv("HENK_DIGEST_MODEL", "").strip()
         ai_record = None
         if not model:

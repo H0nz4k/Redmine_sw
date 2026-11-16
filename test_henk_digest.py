@@ -95,16 +95,21 @@ class HenkDigestTests(unittest.TestCase):
         self.assertIn("Ověřujeme správnou hodnotu.", henk_digest.summarize_private(
             self.path, "https://redmine.example.test", "test", inference=lambda *_: answer))
 
-    def test_period_status_without_comment_does_not_force_false_citation(self):
+    def test_status_only_reports_period_change_without_old_text_or_model(self):
         self.issue['journals'][1]['notes'] = ''
         self.issue['journals'][1]['details'] = [{'property': 'attr', 'name': 'status_id', 'old_value': '1', 'new_value': '2'}]
+        self.payload['issue_status_names'] = {'1': 'Nový', '2': 'Vyřešený'}
         self.store()
-        answer = json.dumps({'summary': 'Dřívější kontrola.', 'source_ids': ['issue:91', 'journal:91:7']}, ensure_ascii=False)
-        result = henk_digest.summarize_private(self.path, 'https://redmine.example.test', 'test', inference=lambda *_: answer)
-        self.assertIn('Dřívější kontrola.', result)
-        self.assertIn('12.11.2026 11:00 UTC', result)
+        result = henk_digest.summarize_private(self.path, 'https://redmine.example.test', 'test',
+                                                inference=lambda *_: self.fail('Status-only issue must not invoke AI'))
+        self.assertIn('stav Nový → Vyřešený', result)
+        self.assertIn('journal:91:9', result)
+        self.assertNotIn('Dřívější kontrola.', result)
+        self.assertNotIn('Odesílání zpráv se nezdařilo.', result)
 
     def test_added_sentence_separator_is_allowed_only_for_exact_source(self):
+        self.issue['created_on'] = '2026-11-13T09:00:00Z'
+        self.store()
         answer = json.dumps({'summary': 'e-Jídelníček SMTP/DKIM. Ověřujeme správnou hodnotu.',
                              'source_ids': ['issue:91', 'journal:91:9']}, ensure_ascii=False)
         result = henk_digest.summarize_private(self.path, 'https://redmine.example.test', 'test', inference=lambda *_: answer)
@@ -184,8 +189,62 @@ class HenkDigestTests(unittest.TestCase):
         self.assertIn("journal:91:9", result)
         self.assertIn("Ověřujeme správnou hodnotu", result)
         self.assertEqual(received[0][1], "local-test")
-        self.assertEqual(received[0][0]["journals_through_cutoff"][1]["notes"],
+        self.assertEqual(received[0][0]["description_snapshot"], "")
+        self.assertNotIn("Dřívější kontrola", json.dumps(received[0][0], ensure_ascii=False))
+        self.assertEqual(received[0][0]["journals_through_cutoff"][0]["notes"],
                          "DNS obsahuje neplatný DKIM záznam. Ověřujeme správnou hodnotu.")
+
+    def test_old_issue_with_comment_and_status_uses_period_evidence_only(self):
+        self.issue['journals'][1]['details'] = [{'property': 'attr', 'name': 'status_id', 'old_value': '3', 'new_value': '5'},
+                                                 {'property': 'attr', 'name': 'assigned_to_id', 'old_value': '7', 'new_value': '8'}]
+        self.payload['issue_status_names'] = {'3': 'Vrácený', '5': 'Vyřešený'}
+        self.store()
+        seen = []
+        def fake(prompt, model):
+            seen.append(json.loads(prompt))
+            return self.valid_response()
+        result = henk_digest.summarize_private(self.path, 'https://redmine.example.test', 'test', inference=fake)
+        self.assertIn('stav Vrácený → Vyřešený', result)
+        self.assertIn('změněn řešitel', result)
+        self.assertIn('Ověřujeme správnou hodnotu.', result)
+        self.assertNotIn('Odesílání zpráv se nezdařilo.', result)
+        self.assertNotIn('Dřívější kontrola.', result)
+        self.assertEqual(seen[0]['subject_snapshot'], '')
+        self.assertEqual(seen[0]['description_snapshot'], '')
+        self.assertEqual(len(seen[0]['journals_through_cutoff']), 1)
+
+    @patch.dict(os.environ, {"HENK_DIGEST_BACKEND": "henk"})
+    def test_henk_gets_only_current_note_and_local_change_data_is_preserved(self):
+        self.issue['journals'][1]['notes'] = 'Jedna hodina práce a doprava.'
+        self.issue['journals'][1]['details'] = [
+            {'property': 'attr', 'name': 'status_id', 'old_value': '3', 'new_value': '5'},
+            {'property': 'attr', 'name': 'assigned_to_id', 'old_value': '7', 'new_value': '8'},
+            {'property': 'cf', 'name': '42', 'old_value': '', 'new_value': 'vyfakturovat'},
+        ]
+        self.payload['issue_status_names'] = {'3': 'Vrácený', '5': 'Vyřešený'}
+        self.store()
+        def fake(prompt, model, connect):
+            context = json.loads(prompt)
+            self.assertEqual(context['description_snapshot'], '')
+            self.assertEqual([j['source_id'] for j in context['journals_through_cutoff']], ['journal:91:9'])
+            return json.dumps({'summary': 'Jedna hodina práce a doprava.',
+                               'source_ids': ['issue:91', 'journal:91:9']})
+        with patch.object(henk_digest.henk_mcp, 'infer', side_effect=fake) as infer:
+            result = henk_digest.summarize_private(self.path, 'https://redmine.example.test', 'henk', connect=self.connect)
+        self.assertEqual(infer.call_count, 1)
+        self.assertIn('stav Vrácený → Vyřešený', result)
+        self.assertIn('změněn řešitel', result)
+        self.assertIn('změněno vlastní pole', result)
+        self.assertIn('Jedna hodina práce a doprava.', result)
+        self.assertNotIn('Dřívější kontrola.', result)
+
+    def test_status_metadata_fallback_uses_ids_without_guessing(self):
+        self.issue['journals'][1]['notes'] = ''
+        self.issue['journals'][1]['details'] = [{'property': 'attr', 'name': 'status_id', 'old_value': '3', 'new_value': '5'}]
+        self.store()
+        result = henk_digest.summarize_private(self.path, 'https://redmine.example.test', 'test', inference=lambda *_: self.fail('No model'))
+        self.assertIn('stav ID 3 → ID 5', result)
+        self.assertNotIn('Vyřešený', result)
 
     def test_future_snapshot_is_excluded_from_ai_input(self):
         self.issue["updated_on"] = "2026-11-14T10:00:00Z"
@@ -299,7 +358,7 @@ class HenkDigestTests(unittest.TestCase):
         self.store()
         answer = json.dumps({"summary": self.issue["description"],
                              "source_ids": ["issue:91", "journal:91:9"]})
-        with self.assertRaisesRegex(ValueError, "reportovaného období"):
+        with self.assertRaisesRegex(ValueError, "úplnou citací"):
             henk_digest.summarize_private(
                 self.path, "https://redmine.example.test", "model", inference=lambda *_: answer)
 

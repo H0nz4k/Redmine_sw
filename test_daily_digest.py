@@ -41,6 +41,8 @@ class DigestTests(unittest.TestCase):
 
     def request(self, path, params):
         self.calls.append((path, params))
+        if path == "/issue_statuses.json":
+            return {"issue_statuses": [{"id": 1, "name": "Nový"}, {"id": 5, "name": "Vyřešený"}]}
         if path == "/projects.json":
             off = params["offset"]
             return {"projects": self.projects[off:off + 100], "total_count": len(self.projects)}
@@ -112,7 +114,7 @@ class DigestTests(unittest.TestCase):
         self.assertEqual(result["event_count"], 3)
         report = digest.read_report(self.connect, "2026-11-13")
         story = report.split("## Co se skutečně řešilo")[1].split("## Co přibylo")[0]
-        self.assertIn("Na škole nelze načíst čipy", story)
+        self.assertNotIn("Na škole nelze načíst čipy", story)
         self.assertIn("Terminál přestal načítat čipy", story)
         self.assertIn("Jarda", story)
         self.assertIn("Zkontroloval kabel", story)
@@ -120,6 +122,25 @@ class DigestTests(unittest.TestCase):
         self.assertIn("/issues/44", story)
         self.assertNotIn("Vyměněna vadná deska", story)
         self.assertNotIn("hotovo", story.lower())
+
+    def test_missing_status_metadata_falls_back_without_guessing(self):
+        def unavailable(path, params):
+            raise OSError('offline')
+        self.assertEqual(digest._issue_status_names(unavailable), {})
+        self.assertEqual(digest._issue_status_names(lambda *_: {'issue_statuses': None}), {})
+
+    def test_old_issue_status_change_does_not_repeat_original_description(self):
+        journal = [{"id": 11, "created_on": "2026-11-13T14:00:00Z", "user": {"name": "Eva"},
+                    "notes": "", "details": [{"property": "attr", "name": "status_id", "old_value": "1", "new_value": "5"}]}]
+        self.issue(46, "2026-10-01T10:00:00Z", "2026-11-13T14:00:00Z", journal, status="Vyřešený", status_id=5)
+        self.details[46]['description'] = 'Původní zadání je staré.'
+        with patch.dict(os.environ, {'HENK_DIGEST_MODEL': 'test'}), patch.object(digest.henk_digest, '_ollama', side_effect=AssertionError('AI must not be called')):
+            self.generate('2026-11-13T16:30:00+00:00')
+        report = digest.read_report(self.connect, '2026-11-13')
+        self.assertIn('stav Nový → Vyřešený', report)
+        self.assertNotIn('Původní zadání je staré.', report)
+        source = json.loads((digest.REPORT_DIR / 'henk-input' / '2026-11-13.json').read_text(encoding='utf8'))
+        self.assertEqual(source['issue_status_names']['5'], 'Vyřešený')
 
     def test_repeated_changes_same_issue_have_single_narrative_paragraph(self):
         changes = [
