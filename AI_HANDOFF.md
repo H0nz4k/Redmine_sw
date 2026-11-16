@@ -1,5 +1,11 @@
 # Redmine a Henk — nasazený souhrn
 
+## Přerušeno 16. 11. 2026 — „OK Henku“
+
+Uživatel požádal o přidání „OK Henku“ a aktivaci a potom práci pro dnešek zastavil. Fráze je připravena v kandidátu `voice/`, včetně kontroly Fish přepisu a helpdeskového filtru; šest cílených testů prošlo na HUBu. Místní Vosk zná `ok` a `venku`, ale nezná `henku` ani `okej`. Při jedné větě uživatele místní wake nezareagoval; příčina zatím nebyla změřena. Krátká předchozí zkouška neměla zkopírovaný LED ovladač a zelená nesvítila; po doplnění ovladače byla další zkouška spuštěna a uživatel potvrdil vyslovení. Test byl ukončen, LED zhasnuty a žádná hlasová služba ani kandidát nebyly nasazeny. Rozpracované změny zachovat a navázat diagnostikou lokálního rozpoznání; netvrdit funkční hlasové probuzení.
+
+Aktivní jsou Henkovy služby a `respeaker-henk-inbox.service`; hlasový posluchač stále neběží. Izolovaný kandidát je `/tmp/henk-ok-review-20261116`, kontrolovaná záloha dosavadních souborů `/var/tmp/henk-ok-backup-20261116`. Tyto dočasné cesty a stav HUBu po návratu znovu ověřit. Nevracet ani neměnit Redmine databázi nebo Henkovu frontu.
+
 ## Rozpracovaná hlasová etapa 15. 11. 2026
 
 **Pokračování po návratu:** do kandidáta přibyla kontrola, že Voskův fonetický kandidát sám nesmí odeslat požadavek: po místním probuzení je před předáním Henkovi nutné potvrdit oslovení a neprázdnou otázku v přepisu Fish. Uživatel požaduje také samostatné „Hej“ a „Hej Henku“ a dříve schválil „Čau Henku“. Samotné „Hej“ je obecné slovo; žádný wake-word ani tato pojistka není ověřením totožnosti a absolutní odstranění falešných aktivací nebylo prokázáno. Při krátkém klidovém pokusu s původní nižší energetickou podmínkou došlo k jednomu lokálnímu probuzení za 30 s, druhá pojistka ale nic Henkovi neodeslala. Přísnější energetická podmínka pět snímků zase přehlédla uživatelovo oslovení. „Čau Henku“ Vosk místně rozpoznal jako `cau venku`, „Hej Henku“ zatím nerozpoznal jako celou frázi ve třech konfiguracích Vosk na jednom uživatelském vzorku. Obojí vyžaduje další reálné ověření.

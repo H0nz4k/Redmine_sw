@@ -9,7 +9,7 @@ from websockets.exceptions import WebSocketException
 from voice_bridge import validate_czech_transcript
 
 URL = 'wss://api.fish.audio/v1/asr/realtime'
-TERMS = ['Henku', 'helpdesk']
+TERMS = ['Henku', 'OK Henku', 'helpdesk']
 
 
 def transcribe(path, api_key):

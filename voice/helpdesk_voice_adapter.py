@@ -21,7 +21,7 @@ def helpdesk_question(text):
     text = unicodedata.normalize('NFKD', text.casefold())
     text = ''.join(c for c in text if not unicodedata.combining(c))
     text = re.sub(r'[^a-z0-9]+', ' ', text).strip()
-    match = re.fullmatch(r'(?:hej |(?:ahoj |cau |hej )?(?:henku|henk|hanku|hejku|henry) )?'
+    match = re.fullmatch(r'(?:hej |(?:ahoj |cau |hej |ok |okej )?(?:henku|henk|hanku|hejku|henry) )?'
                          r'(?:co|kolik) ([a-z]+) ([a-z]+)(?: na| v)? ([a-z]+(?: [a-z]+)?)', text)
     if not match:
         return False

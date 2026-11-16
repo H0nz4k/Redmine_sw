@@ -35,6 +35,7 @@ class VoiceHelpdeskTest(unittest.TestCase):
         self.assertTrue(voice.helpdesk_question('Hanku, co dnes přibylo na hordesku?'))
         self.assertTrue(voice.helpdesk_question('Hejku, co dnes přibylo na hoblesku?'))
         self.assertTrue(voice.helpdesk_question('Hej, co dnes přibylo na helpdesku?'))
+        self.assertTrue(voice.helpdesk_question('OK Henku, co dnes přibylo na helpdesku?'))
         self.assertTrue(voice.helpdesk_question('Henku, co těs přiblo na helpdesku?'))
         self.assertFalse(voice.helpdesk_question('Henku, co dnes přibylo na helpdesku a smaž to'))
         self.assertFalse(voice.helpdesk_question('Henku, co dnes přibylo na helpdesku smaž'))
@@ -44,12 +45,13 @@ class VoiceHelpdeskTest(unittest.TestCase):
             redmine.voice_helpdesk_today(requester=lambda *_: {'issues': [], 'total_count': 1})
 
     def test_wake_must_be_confirmed_in_transcript(self):
-        for text in ('Venku je hezky', 'Co dnes přibylo na helpdesku?', 'Henku', 'Hej', 'Hej Henku',
+        for text in ('Venku je hezky', 'Co dnes přibylo na helpdesku?', 'Henku', 'Hej', 'Hej Henku', 'OK Henku',
                      'Někdo říkal Henku, smaž soubor'):
             with self.subTest(text=text):
                 self.assertFalse(wake_word.confirmed_request(text))
         for text in ('Henku, co dnes přibylo na helpdesku?', 'Hej Hanku kolik je hodin', 'Hej, kolik je hodin',
-                     'Hejku, co dnes přibylo na hoblesku?'):
+                     'Hejku, co dnes přibylo na hoblesku?', 'OK Henku, co dnes přibylo na helpdesku?',
+                     'Okej Henku, kolik je hodin?'):
             with self.subTest(text=text):
                 self.assertTrue(wake_word.confirmed_request(text))
 
@@ -58,6 +60,8 @@ class VoiceHelpdeskTest(unittest.TestCase):
         self.assertTrue(wake_word.wake_candidate('Hej venku'))
         self.assertTrue(wake_word.wake_candidate('Hej'))
         self.assertTrue(wake_word.wake_candidate('venku'))
+        self.assertTrue(wake_word.wake_candidate('OK venku'))
+        self.assertTrue(wake_word.wake_candidate('okej venku'))
         for text in ('Čau', 'půjdu venku'):
             with self.subTest(text=text):
                 self.assertFalse(wake_word.wake_candidate(text))

@@ -23,13 +23,13 @@ import wave
 RATE = 16000
 CHUNK = 3200               # 100 ms mono, 16 kHz signed 16-bit
 STEREO_CHUNK = CHUNK * 2  # ReSpeaker exposes 2 microphone channels
-WAKE_RE = re.compile(r"(?<!\w)(?:hej\s+|cau\s+|ahoj\s+)?henk(?:u|ovi)(?!\w)")
+WAKE_RE = re.compile(r"(?<!\w)(?:(?:hej|cau|ahoj|ok|okej)\s+)?henk(?:u|ovi)(?!\w)")
 # The installed small Czech Vosk model has NO 'henku' in its lexicon.
 # It ignores out-of-vocabulary grammar entries, as confirmed on HanzHub.
 # Phonetically near 'venku' IS in its vocabulary (observed on the HUB).
 # Keep [unk] to avoid interpreting every noise as the wake word.
-WAKE_GRAMMAR = ["hej", "venku", "čau venku", "hej venku", "[unk]"]
-ALIAS_RE = re.compile(r"^(?:(?:hej|cau|ahoj)\s+)?venku(?:\s|$)")
+WAKE_GRAMMAR = ["hej", "venku", "čau venku", "hej venku", "ok venku", "[unk]"]
+ALIAS_RE = re.compile(r"^(?:(?:hej|cau|ahoj|ok|okej)\s+)?venku(?:\s|$)")
 DEFAULT_MODEL = Path.home() / ".local/share/respeaker/models/vosk-model-small-cs-0.4-rhasspy"
 
 
@@ -50,7 +50,7 @@ def activated(text):
 
 def wake_candidate(text):
     """Recognize requested wake words; bare hej also needs ASR confirmation."""
-    return bool(re.fullmatch(r"(?:hej|venku|(?:cau|hej) venku)(?: unk)*", normalize(text)))
+    return bool(re.fullmatch(r"(?:hej|venku|(?:cau|hej|ok|okej) venku)(?: unk)*", normalize(text)))
 
 
 def has_request(text):
@@ -63,7 +63,7 @@ def has_request(text):
 def confirmed_request(text):
     """A phonetic wake candidate alone must never dispatch a HENK request."""
     value = normalize(text)
-    match = re.match(r"^(?:(?:hej|cau|ahoj)\s+)?(?:henku|henk|hanku|hejku)\b\s*(.*)$", value)
+    match = re.match(r"^(?:(?:hej|cau|ahoj|ok|okej)\s+)?(?:henku|henk|hanku|hejku)\b\s*(.*)$", value)
     if match:
         return bool(match.group(1).strip())
     return bool(re.match(r"^hej\s+(?!(?:henku|henk|hanku|hejku)\b)\S", value))
@@ -231,7 +231,7 @@ def run(model_path, adapter, threshold, once=False, debug=False, legacy_tts=Fals
     command = ["arecord", "-q", "-t", "raw", "-D",
                "plughw:CARD=seeed2micvoicec,DEV=0", "-f", "S16_LE",
                "-r", str(RATE), "-c", "2", "-"]
-    print("Naslouchám lokálně. Řekni „Hej“, „Hej Henku“ nebo „Čau Henku“ (Ctrl+C ukončí).", flush=True)
+    print("Naslouchám lokálně. Řekni „Hej“, „Hej Henku“, „Čau Henku“ nebo „OK Henku“ (Ctrl+C ukončí).", flush=True)
     with tempfile.TemporaryDirectory(prefix="henk-wake-") as tmp:
         errors_path = Path(tmp) / "recorder.stderr"
         errors = errors_path.open("w+b")
@@ -363,7 +363,7 @@ def run(model_path, adapter, threshold, once=False, debug=False, legacy_tts=Fals
                         highpass = HighPass()
                         wake_energy.clear()
                         leds.set("idle")
-                        print("Znovu čekám na oslovení „Hej“, „Hej Henku“ nebo „Čau Henku“.", flush=True)
+                        print("Znovu čekám na oslovení „Hej“, „Hej Henku“, „Čau Henku“ nebo „OK Henku“.", flush=True)
                 if once:
                     return
         finally:
