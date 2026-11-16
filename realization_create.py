@@ -39,7 +39,8 @@ def prepare(parent_id, request):
         raise ValueError('Nadřazený úkol nepatří do projektu Realizace.')
     statuses = request('/issue_statuses.json')['issue_statuses']
     status = next((s for s in statuses if s.get('id') == parent.get('status', {}).get('id')), None)
-    if not status or status.get('is_closed') is not False:
+    # Older Redmine omits is_closed for open states and returns true for closed ones.
+    if not status or status.get('is_closed', False) is not False:
         raise ValueError('Realizace není otevřená nebo nelze ověřit její stav.')
     if 'children' not in parent:
         # Some Redmine versions omit an empty association. Query direct children,

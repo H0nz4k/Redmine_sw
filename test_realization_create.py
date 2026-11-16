@@ -72,6 +72,12 @@ class CreationTests(unittest.TestCase):
         self.assertEqual(result['tasks'][0]['state'],'unknown');self.assertEqual(result['tasks'][0]['issue_id'],101)
         self.assertEqual(result['tasks'][1]['state'],'pending');self.assertEqual(len(self.writes),1)
 
+    def test_open_status_may_omit_is_closed(self):
+        def legacy_status(path,params=None):
+            if path=='/issue_statuses.json':return {'issue_statuses':[{'id':1,'name':'Nový'}]}
+            return self.request(path,params)
+        self.assertEqual(rc.prepare(42,legacy_status)['id'],42)
+
     def test_closed_parent_and_missing_children_refused(self):
         self.parent['children']=None
         with self.assertRaisesRegex(ValueError,'dílčích'):rc.prepare(42,self.request)
