@@ -25,10 +25,37 @@ def emails(value):
     return set(re.findall(r'[a-z0-9._%+\-]+@[a-z0-9.\-]+\.[a-z]{2,}', str(value).lower()))
 
 
+def signature_words(description):
+    """Use the first recognizable sign-off, not arbitrary names in the message body."""
+    lines = str(description or '').splitlines()
+    signoff = re.compile(r'^(?:s pozdravem|s uctou|srdecne zdravim|zdravi|preji (?:hezky|krasny|prijemny) (?:den|vecer))\b')
+    for index, line in enumerate(lines):
+        normalized = normalize(line)
+        match = signoff.match(normalized)
+        if not match:
+            continue
+        signature = [normalized[match.end():]]
+        for following in lines[index + 1:]:
+            following = normalize(following)
+            if not following:
+                if any(signature):
+                    break
+                continue
+            if signoff.match(following):
+                continue
+            signature.append(following)
+            if len(signature) >= 4:
+                break
+        return set(' '.join(signature).split())
+    return set()
+
+
 def customer_suggestions(subject, description, candidates):
     raw = (subject or '') + ' ' + (description or '')
     text = ' ' + normalize(raw) + ' '
     words = set(text.split())
+    signed = signature_words(description)
+    raw_phones, raw_emails = phones(raw), emails(raw)
     school_words = {'skola', 'skoly', 'skole', 'skolu', 'skolou', 'skol', 'skolach', 'skolami'}
     generic = school_words | {'zakladni', 'stredni', 'materska', 'skolni', 'jidelnicka', 'jidelnicek', 'skolnich', 'organizace', 'prispevkova', 'nemocnice', 'gymnazium', 'pavilon', 'zakaznik', 'jidelnа', 'praha', 'mesto'}
     contact_generic = generic | {'vedouci', 'stravovani', 'kontakt', 'telefon', 'email', 'reditel', 'reditelka', 'jidelna', 'skolа'}
@@ -47,22 +74,24 @@ def customer_suggestions(subject, description, candidates):
         exact = len(name) >= 5 and not only_school and ' ' + name + ' ' in text
         overlap = group & words
         rare = [t for t in overlap if name_counts[t] <= 5]
-        evidence = []
-        score = 0
-        if exact:
-            evidence.append('úplný název provozovny'); score += 4
-        elif rare:
-            evidence.append('část názvu provozovny'); score += 1
         contact = ' '.join(str(v) for v in candidate.get('contacts', []) if v)
-        if phones(raw) & phones(contact):
-            evidence.append('telefon'); score += 5
-        if emails(raw) & emails(contact):
-            evidence.append('e-mail'); score += 5
-        if any(contact_counts[t] <= 3 for t in people & words):
-            evidence.append('jméno v textu'); score += 2
+        phone_match = bool(raw_phones & phones(contact))
+        email_match = bool(raw_emails & emails(contact))
+        signed_match = any(contact_counts[t] <= 3 for t in people & signed)
+        evidence = []
+        if email_match: evidence.append('e-mail')
+        if phone_match: evidence.append('telefon')
+        if signed_match: evidence.append('jméno v podpisu')
+        if exact: evidence.append('úplný název provozovny')
+        elif rare: evidence.append('část názvu provozovny')
         if not evidence:
             continue
-        strong = score >= 7 and len(evidence) >= 2
+        contact_match = phone_match or email_match
+        priority = 3 if contact_match else 2 if signed_match else 1 if exact else 0
+        score = 2 * (int(phone_match) + int(email_match)) + int(signed_match) + int(exact)
         reason = 'Shoda: ' + ', '.join(evidence) + '; zkontrolujte provozovnu.'
-        found.append((-score, candidate['id'], {'id': candidate['id'], 'name': candidate['name'], 'reason': reason, 'strength': 'strong' if strong else 'possible'}))
-    return [item for _, _, item in sorted(found)[:10]]
+        found.append((-priority, -score, candidate['id'], {'id': candidate['id'], 'name': candidate['name'], 'reason': reason, 'strength': 'strong' if contact_match and (signed_match or exact or (phone_match and email_match)) else 'possible'}))
+    # Weak name fragments are useful only when no better evidence is available.
+    if any(priority < 0 for priority, _, _, _ in found):
+        found = [entry for entry in found if entry[0] < 0]
+    return [item for _, _, _, item in sorted(found)[:10]]

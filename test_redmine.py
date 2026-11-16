@@ -242,10 +242,45 @@ class SyncTests(unittest.TestCase):
         result = customer_suggestions('Oprava ZŠ Lípa', 'Novotná, tel. 601 234 567', customers)
         self.assertEqual([item['id'] for item in result], [7, 8])
         self.assertIn('telefon', result[0]['reason'])
-        self.assertIn('jméno v textu', result[0]['reason'])
+        self.assertNotIn('jméno v podpisu', result[0]['reason'])
         self.assertNotIn('601', str(result))
         self.assertEqual(customer_suggestions('Oprava', 'kontakt na gmail.com', customers), [])
         self.assertIn('e-mail', customer_suggestions('Pomoc', 'skola@example.cz', customers)[0]['reason'])
+
+    def test_customer_priority_contacts_signature_then_names(self):
+        from suggestions import customer_suggestions
+        candidates = [
+            {'id': 1, 'name': 'ZŠ Na kopci', 'contacts': ['Jana Novotná', 'jana@example.cz']},
+            {'id': 2, 'name': 'MŠ Na kopci', 'contacts': ['Petr Dvořák']},
+            {'id': 3, 'name': 'Kopci servis'},
+        ]
+        description = 'Píšu za MŠ Na kopci. Jana je zmíněna v textu.\nS pozdravem\nPetr Dvořák'
+        result = customer_suggestions('ZŠ Na kopci', description, candidates)
+        self.assertEqual([c['id'] for c in result], [2, 1])
+        self.assertIn('jméno v podpisu', result[0]['reason'])
+        result = customer_suggestions('ZŠ Na kopci', description + '\nKontakt: jana@example.cz', candidates)
+        self.assertEqual([c['id'] for c in result], [1, 2])
+        self.assertIn('e-mail', result[0]['reason'])
+        self.assertNotIn('jana@example.cz', str(result))
+        self.assertEqual(customer_suggestions('', 'Jana Novotná je zmíněna v popisu.', candidates), [])
+        result = customer_suggestions('ZŠ Na kopci', 'Telefon 601 234 567', [
+            {'id': 1, 'name': 'ZŠ Na kopci'},
+            {'id': 2, 'name': 'Jiná provozovna', 'contacts': ['+420 601 234 567']},
+        ])
+        self.assertEqual([c['id'] for c in result], [2, 1])
+
+    def test_forwarded_messages_can_match_more_than_one_contact(self):
+        from suggestions import customer_suggestions
+        candidates = [
+            {'id': 1, 'name': 'U Tyršovy školy', 'contacts': ['Renáta Řehořová', 'jidelna@example.cz']},
+            {'id': 2, 'name': 'Dodavatel', 'contacts': ['technik@dodavatel.example']},
+        ]
+        message = ('Od jidelna@example.cz\nObjednávka\nPřeji krásný den.\n\n'
+                   'Renáta Řehořová\n\nOd technik@dodavatel.example\nPředchozí odpověď')
+        result = customer_suggestions('Objednávka U Tyršovy školy', message, candidates)
+        self.assertEqual([c['id'] for c in result], [1, 2])
+        self.assertIn('jméno v podpisu', result[0]['reason'])
+        self.assertNotIn('jméno v podpisu', result[1]['reason'])
 
     def test_pagination(self):
         responses = [{'issues':[{'id':1}], 'total_count':2}, {'issues':[{'id':2}], 'total_count':2}]
