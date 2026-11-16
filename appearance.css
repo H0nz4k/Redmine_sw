@@ -148,3 +148,6 @@ html[data-theme=dark] .overview .nav button[aria-current=true]{border-top-color:
 
 .brief-dialog-foot{display:flex;justify-content:flex-end;margin-top:16px;padding-top:12px;border-top:1px solid var(--ui-border)}
 .brief-dialog-foot button{background:var(--ui-surface);color:var(--ui-text);border-color:var(--ui-border)}
+
+.overview #update-ready{min-height:40px;padding:6px 10px;border:2px solid var(--ui-accent);background:var(--ui-surface);color:var(--ui-accent);white-space:nowrap}
+.overview #update-ready[hidden]{display:none}
