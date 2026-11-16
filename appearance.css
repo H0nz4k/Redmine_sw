@@ -127,3 +127,14 @@ html[data-theme=dark] .overview .nav::after{border-color:#ff9b8f}
 .overview .nav::after{border-radius:4px 4px 0 0}
 .overview .panel,.overview .embedded-panel{border-radius:4px}
 .overview .filter-menu summary{border-width:2px}
+
+/* Celý rámeček hlavičky a oddělené záložky podle návrhu. */
+.overview header>div{padding-left:34px;padding-right:34px}
+.overview header>div::before{top:4px;bottom:4px;left:24px;right:24px;border-top:2px solid var(--ui-border);border-radius:4px}
+.overview header .sub{border-left:0;padding-left:0}
+.overview .nav button{position:relative}
+.overview .nav button[aria-current=true]{border-top:2px solid #a32f23!important}
+html[data-theme=dark] .overview .nav button[aria-current=true]{border-top-color:#ff9b8f!important}
+.overview .nav button:not([aria-current=true]):not(:last-child)::before{content:"";position:absolute;right:-1px;top:10px;bottom:10px;width:2px;background:var(--ui-border);pointer-events:none}
+.overview .nav button:not([aria-current=true]):has(+button[aria-current=true])::before{display:none}
+@media(max-width:750px){.overview header>div{padding-left:18px;padding-right:18px}.overview header>div::before{left:8px;right:8px}.overview .nav button:not([aria-current=true])::before{display:none}}
