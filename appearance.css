@@ -69,6 +69,12 @@ html[data-theme=dark] .overview .nav button[aria-current=true]{color:#ffd1c8!imp
 @media(max-width:560px){.overview .filter-menu[data-menu=assignee] .filter-options,.overview .filter-menu[data-menu=type] .filter-options{left:auto;right:0}}
 
 /* Vybraná karta zůstává šedá a bez červeného podtržení. */
-.overview .nav button[aria-current=true]{position:relative;background:var(--ui-hover)!important;border-bottom-color:var(--ui-hover)!important}.overview .nav button[aria-current=true]:hover{background:var(--ui-hover)!important}.overview .nav button[aria-current=true]::after{content:"";position:absolute;left:0;right:0;bottom:-2px;height:2px;background:var(--ui-hover)}html[data-theme=dark] .overview .nav button[aria-current=true]{border-bottom-color:var(--ui-hover)!important}
+.overview .nav button[aria-current=true]{position:relative;background:var(--ui-hover)!important;border-bottom-color:var(--ui-hover)!important}.overview .nav button[aria-current=true]:hover{background:var(--ui-hover)!important}.overview .nav button[aria-current=true]::after{content:"";position:absolute;left:-2px;right:-2px;bottom:-6px;height:2px;background:var(--ui-hover);z-index:1}html[data-theme=dark] .overview .nav button[aria-current=true]{border-bottom-color:var(--ui-hover)!important}
 
 .sr-only{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}
+
+/* Kompaktní akce využívají šířku karty, místo čtyř vysokých řádků. */
+.overview .issue{grid-template-columns:minmax(0,1fr) minmax(300px,360px)}
+.overview .issue-actions{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));align-content:start;gap:6px}
+.overview .issue-actions button{min-width:0;min-height:38px;padding:6px 8px;line-height:1.2}
+@media(max-width:750px){.overview .issue{grid-template-columns:1fr}.overview .issue-actions button{min-height:44px}}
