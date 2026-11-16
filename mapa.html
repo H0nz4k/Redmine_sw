@@ -30,10 +30,10 @@ header div.header-actions{display:flex;align-items:center;gap:12px;flex-wrap:wra
 .list{height:clamp(300px,55vh,620px);max-height:none;min-height:0}
 #detail-view{max-height:clamp(300px,65vh,700px)}
 .map-content{min-width:0}
-.map-controls{display:grid;grid-template-columns:minmax(200px,1fr) minmax(0,3fr);gap:12px;margin-bottom:12px;align-items:start}
-.map-controls .tools{padding:0}
-.map-controls .trip{padding:0;border:0;min-width:0}
-.trip h2{margin:0 0 6px}
+.map-controls{display:flex;flex-direction:column;gap:8px;margin-bottom:12px;min-width:0}
+.map-controls .tools{padding:0;width:100%}
+.map-controls .trip{padding:0;border:0;min-width:0;width:100%}
+.trip h2{margin:0 0 4px}
 .trip-fields{display:flex;align-items:end;gap:8px;flex-wrap:wrap}
 .trip-fields label{flex:1 1 160px;font-size:14px}
 .trip-fields input{display:block;margin:4px 0 0}
@@ -41,9 +41,9 @@ header div.header-actions{display:flex;align-items:center;gap:12px;flex-wrap:wra
 .trip .trip-actions{flex-wrap:wrap}
 .trip .trip-actions button{width:auto;flex:0 1 auto}
 .trip-status{display:flex;flex-wrap:wrap;gap:0 16px}
-.trip-list{max-height:100px;overflow:auto}
+.trip-list{display:flex;flex-wrap:wrap;gap:4px 16px;max-height:72px;overflow:auto;margin:0;padding-left:22px}.trip-list:empty{display:none}.trip-list li{margin:0}
 .map{height:clamp(280px,43vh,500px)}
-@media(max-width:900px){.map-controls{grid-template-columns:1fr}.layout{grid-template-columns:minmax(210px,270px) minmax(0,1fr)}}
+@media(max-width:900px){.layout{grid-template-columns:minmax(210px,270px) minmax(0,1fr)}}
 @media(max-width:750px){.layout{display:flex;flex-direction:column}.map-content{order:0;width:100%}.customer-panel{order:1;width:100%}.list{height:32vh;min-height:180px}.map{height:clamp(260px,40vh,380px)}#detail-view{max-height:45vh}}
 </style><link rel="stylesheet" href="appearance.css"></head><body class="map-page"><header><div><h1 class="page-identity"><a class="brand-link" href="./" aria-label="RedCheck – zpět na přehled"><svg class="brand-mark" aria-hidden="true" viewBox="0 0 48 48"><rect width="48" height="48" rx="7"/><path d="M11 13h15M11 20h11M11 27h8"/><path class="brand-check" d="m24 28 4.5 4.5L38 22"/></svg><span>Red<span class="brand-accent">Check</span></span></a><span class="page-title">Mapa zákazníků</span></h1><div class="header-actions"><a href="./">Zpět na přehled</a><button type="button" id="sync-redmine">Načíst z Redmine</button></div></div></header><p id="sync-status" class="sync-status" role="status" aria-live="polite" hidden></p><main><div class="layout"><section class="customer-panel" aria-label="Zákazníci"><div id="customer-list-view"><h2 class="customers-title">Zákazníci</h2><div class="segments" role="group" aria-label="Zdroj zákazníků"><button id="map-list" type="button" aria-pressed="true">V seznamu</button><button id="compare" type="button" aria-pressed="false">Porovnat s Redmine</button></div><div class="scan-control"><button id="scan" type="button">Zkontrolovat související úkoly</button></div><p id="count" class="count" role="status">Načítám…</p><div class="list" id="list"></div></div><div id="detail-view" hidden><button type="button" id="back-to-list" class="back-to-list">← Zpět na seznam</button><div id="detail" class="detail"></div></div></section><section class="map-content" aria-label="Mapa a plán výjezdu"><div class="map-controls"><div class="tools"><input id="search" type="search" placeholder="Hledat zákazníka nebo adresu" aria-label="Hledat zákazníka nebo adresu"></div><section class="trip" aria-labelledby="trip-title"><h2 id="trip-title">Plán výjezdu</h2><div class="trip-fields"><label for="trip-address">Výchozí adresa<input id="trip-address" placeholder="Např. adresa odjezdu"></label><button type="button" id="trip-start">Vybrat začátek na mapě</button><div class="trip-actions"><button type="button" id="trip-optimize">Seřadit zastávky</button><button type="button" id="trip-clear">Vymazat plán</button></div></div><div class="trip-status"><p id="trip-start-status" role="status">Výchozí bod není vybrán.</p><p id="trip-result" class="trip-note" role="status">Přidej zákazníky z detailu na mapě.</p></div><ol id="trip-list" class="trip-list"></ol></section></div><div class="map-wrap"><div id="map" class="map" aria-label="Mapa zákazníků"></div><div id="map-message" class="map-message" hidden></div><a class="map-logo" id="logo" href="https://mapy.com/" target="_blank" rel="noopener" hidden><img src="https://api.mapy.com/img/api/logo.svg" alt="Mapy.com"></a></div><div class="map-legend" aria-label="Legenda stavů"><span><i class="legend-dot open" aria-hidden="true"></i>Otevřené úkoly</span><span><i class="legend-dot closed" aria-hidden="true"></i>Nalezené úkoly uzavřené</span><span><i class="legend-dot" aria-hidden="true"></i>Neověřeno nebo bez vazby</span></div></section></div></main><script src="vendor/leaflet/leaflet.js"></script><script>
 const appPath=location.pathname.startsWith('/redmine/')?'/redmine':'';
