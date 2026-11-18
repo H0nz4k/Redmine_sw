@@ -12,6 +12,51 @@ from unittest.mock import patch
 import daily_digest as digest
 
 
+class TodayOverviewTests(unittest.TestCase):
+    def test_prague_day_all_statuses_journals_and_private_fields(self):
+        items = [
+            {'id': 1, 'created_on': '2026-11-17T23:10:00Z', 'updated_on': '2026-11-18T10:00:00Z'},
+            {'id': 2, 'created_on': '2026-11-16T08:00:00Z', 'updated_on': '2026-11-18T09:00:00Z'},
+            {'id': 3, 'created_on': '2026-11-17T22:59:59Z', 'updated_on': '2026-11-17T22:59:59Z'},
+        ]
+        details = {
+            1: {**items[0], 'subject': 'Nový požadavek', 'project': {'name': 'CRM'},
+                'status': {'name': 'Uzavřený'}, 'author': {'name': 'Eva'},
+                'description': 'Prosím o pomoc. heslo: tajne', 'journals': [
+                    {'created_on': '2026-11-18T10:00:00Z', 'user': {'name': 'Jan'},
+                     'notes': 'Vyřízeno.', 'details': [{'name': 'status_id'}]},
+                    {'created_on': '2026-11-18T22:00:00Z', 'user': {'name': 'Jan'}, 'notes': 'Později', 'details': []},
+                ]},
+            2: {**items[1], 'subject': 'Zákazník', 'project': {'name': 'Zákazníci'},
+                'status': {'name': 'Nový'}, 'description': 'staré heslo: skryté',
+                'journals': [{'created_on': '2026-11-18T09:00:00Z', 'user': {'name': 'Alena'},
+                              'notes': '', 'details': [{'property': 'cf', 'name': '3'}]}]},
+        }
+        seen = []
+        def issues(params):
+            seen.append(params)
+            return items
+        def request(path, params):
+            self.assertEqual(params, {'include': 'journals'})
+            return {'issue': details[int(path.split('/')[-1].split('.')[0])]}
+        result = digest.today_overview(issues, request, 'https://redmine.example',
+                                      datetime(2026, 11, 18, 12, 0, tzinfo=timezone.utc))
+        self.assertEqual(seen, [{'status_id': '*', 'updated_on': '>=2026-11-17'}])
+        self.assertEqual(result['day'], '2026-11-18')
+        self.assertEqual([item['id'] for item in result['items']], [1, 2])
+        self.assertEqual(result['items'][0]['status'], 'Uzavřený')
+        self.assertNotIn('tajne', result['items'][0]['description'])
+        self.assertEqual(len(result['items'][0]['changes']), 1)
+        self.assertEqual(result['items'][1]['description'], '')
+        self.assertEqual(result['items'][1]['changes'][0]['labels'], ['úprava údajů'])
+
+    def test_missing_journal_fails_instead_of_claiming_no_activity(self):
+        item = {'id': 4, 'created_on': '2026-11-18T10:00:00Z', 'updated_on': '2026-11-18T10:00:00Z'}
+        with self.assertRaisesRegex(RuntimeError, 'historii'):
+            digest.today_overview(lambda params: [item], lambda path, params: {'issue': item},
+                                  'https://redmine.example', datetime(2026, 11, 18, 12, tzinfo=timezone.utc))
+
+
 class DigestTests(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()

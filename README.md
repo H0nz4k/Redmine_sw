@@ -50,6 +50,8 @@ Přehled **Dlouho otevřené** zobrazuje synchronizované požadavky starší 72
 
 ## Denní přehled firmy
 
+Na stránce `/denni-prehled` se při otevření načítá **Co se dnes stalo**: aktuální kalendářní den od půlnoci v Europe/Prague do času načtení, napříč projekty a stavy dostupnými API účtu, včetně uzavřených úkolů. Přehled ukazuje vznik a dnešní historii dotčených požadavků, aktuální stav a krátké výňatky; tlačítko jej znovu načte z Redmine. Jde o výtah zdrojových dat, nikoli AI shrnutí nebo potvrzení provedené práce. Popis je aktuální snímek a zobrazuje se pouze u dnes založených úkolů. Výňatky procházejí filtrem rozpoznatelných tajných údajů, který nezaručuje zachycení všech citlivých informací. Přílohy se nenačítají. Přehled je dostupný stejným uživatelům jako stránka; práva API účtu a chybějící data Redmine omezují jeho úplnost. Živé načtení nemění uložené reporty, historii ani plán generování.
+
 Stránka `/denni-prehled` obsahuje přehled denní aktivity napříč všemi projekty viditelnými API účtu. Pro každý aktualizovaný úkol načítá journal historii; rozlišuje vznik úkolů, dokončení a další důležité změny. Uvádí autora a klikací odkaz. Nové projekty porovnává se snímkem z předchozího úspěšného běhu; při prvním běhu projekty pouze inicializuje, aby nevykazoval staré jako nové. Při chybě API neoznačí souhrn za úspěšný.
 
 Report se automaticky vytváří denně v **17:30 Europe/Prague**; čas lze změnit na stránce v rozmezí 00:00–23:59 a nastavení se uchovává v existující SQLite. Lze jej spustit i ručně. Další naplánovaný běh se zobrazuje v aplikaci. Sběr se omezuje na rozsah oprávnění API klíče, nezahrnuje projekty, ke kterým nemá přístup. Během delší odstávky další úspěšný report pokryje události od předchozí uzávěrky.

@@ -703,6 +703,13 @@ class Handler(BaseHTTPRequestHandler):
             self.send(value)
         elif self.path == '/api/digest/history':
             self.send({'reports': daily_digest.history(connect)})
+        elif self.path == '/api/digest/today':
+            try:
+                if not KEY:
+                    raise RuntimeError('Redmine není nastavený.')
+                self.send(daily_digest.today_overview(digest_issues, digest_request, BASE))
+            except Exception:
+                self.send({'error': 'Dnešní změny se nepodařilo načíst z Redmine. Zkuste to znovu.'}, status=502)
         elif self.path == '/api/digest/job':
             self.send(daily_digest.manual_job_status())
         elif self.path.startswith('/api/digest/excerpts?'):

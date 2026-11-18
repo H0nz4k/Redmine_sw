@@ -6,6 +6,7 @@ import threading
 import tempfile
 
 import henk_digest
+import henk_redaction
 from datetime import datetime, time, timedelta, timezone
 from pathlib import Path
 from urllib.parse import urlsplit
@@ -120,6 +121,56 @@ def _digest_excerpt(value, limit=340):
         return value
     cut = value[:limit].rsplit(" ", 1)[0]
     return (cut or value[:limit]).rstrip(" ,.;:") + "…"
+
+
+def today_overview(issues, request, base, now=None):
+    """Read today's visible issue activity without changing reports or checkpoints."""
+    end = _utc(now or datetime.now(timezone.utc))
+    local_end = end.astimezone(TZ)
+    start = datetime.combine(local_end.date(), time.min, tzinfo=TZ).astimezone(timezone.utc)
+    # Date filters on Redmine installations may use a different server timezone.
+    # Include the preceding date and enforce the exact Prague interval locally.
+    query_day = (local_end.date() - timedelta(days=1)).isoformat()
+    results = []
+    for item in issues({"status_id": "*", "updated_on": ">=" + query_day}):
+        if not item.get("updated_on") or _utc(item["updated_on"]) < start:
+            continue
+        issue_id = int(item["id"])
+        detail = request("/issues/" + str(issue_id) + ".json", {"include": "journals"})["issue"]
+        journals = detail.get("journals")
+        if not isinstance(journals, list):
+            raise RuntimeError("Redmine nevrátil historii změn úkolu #" + str(issue_id))
+        created = detail.get("created_on") or item.get("created_on")
+        is_new = bool(created and start <= _utc(created) <= end)
+        changes = []
+        for journal in journals:
+            when = journal.get("created_on")
+            if not when or not start <= _utc(when) <= end:
+                continue
+            details = _source_details(journal)
+            names = {d.get("name") for d in details}
+            labels = []
+            if "status_id" in names: labels.append("změna stavu")
+            if "assigned_to_id" in names: labels.append("změna řešitele")
+            if names - {"status_id", "assigned_to_id"}: labels.append("úprava údajů")
+            note = _digest_excerpt(henk_redaction.text(journal.get("notes") or ""), 600)
+            if not labels and not note:
+                labels.append("změna v historii")
+            changes.append({"at": _stamp(when), "author": _clean(journal.get("user", {}).get("name")),
+                            "labels": labels, "note": note})
+        if not is_new and not changes:
+            continue
+        description = _digest_excerpt(henk_redaction.text(detail.get("description") or ""), 600) if is_new else ""
+        results.append({"id": issue_id, "url": base.rstrip("/") + "/issues/" + str(issue_id),
+                        "subject": _clean(detail.get("subject") or item.get("subject")) or "Bez předmětu",
+                        "project": _clean(detail.get("project", {}).get("name")) or "Neznámý projekt",
+                        "status": _clean(detail.get("status", {}).get("name")) or "Neznámý stav",
+                        "created_at": _stamp(created) if is_new else None,
+                        "author": _clean(detail.get("author", {}).get("name")),
+                        "description": description, "changes": changes})
+    results.sort(key=lambda item: max([item["created_at"] or ""] + [change["at"] for change in item["changes"]]), reverse=True)
+    return {"day": local_end.date().isoformat(), "start": start.isoformat(), "checked_at": end.isoformat(),
+            "items": results}
 
 
 def _source_details(journal):
