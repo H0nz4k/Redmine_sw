@@ -162,13 +162,15 @@ def connect():
     finally:
         db.close()
 
-def find_issue_customers(issue_id):
+def find_issue_customers(issue_id, include_self=False):
     detail = request(f'/issues/{issue_id}.json', {'include': 'relations'})['issue']
     ids = {detail.get('parent', {}).get('id')}
     for rel in detail.get('relations', []):
         ids.add(rel.get('issue_to_id') if rel.get('issue_id') == issue_id else rel.get('issue_id'))
     ids.discard(None); ids.discard(issue_id)
     found = []
+    if include_self and detail.get('project', {}).get('id') == 1 and detail.get('tracker', {}).get('id') == 4:
+        found.append({'id': issue_id, 'name': detail.get('subject', '')})
     ordered = sorted(ids)
     for n in range(0, len(ordered), 100):
         for item in issues({'issue_id': ','.join(map(str, ordered[n:n+100])), 'project_id': 'zakaznici', 'tracker_id': 4, 'status_id': '*'}):
@@ -182,7 +184,7 @@ def digest_customers(raw_ids, lookup=None):
     parts = raw_ids.split(',') if isinstance(raw_ids, str) else []
     if not 1 <= len(parts) <= 40 or any(not re.fullmatch(r'[1-9][0-9]{0,11}', part) for part in parts):
         raise ValueError('Neplatný seznam požadavků.')
-    lookup = lookup or find_issue_customers
+    lookup = lookup or (lambda issue_id: find_issue_customers(issue_id, include_self=True))
     result = {}
     for issue_id in dict.fromkeys(map(int, parts)):
         try:

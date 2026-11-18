@@ -79,6 +79,12 @@ class DigestCustomerTests(unittest.TestCase):
         self.assertEqual(result['2'], {'customers': [], 'available': True})
         self.assertEqual(result['3'], {'customers': [], 'available': False})
 
+    def test_customer_record_identifies_itself_without_changing_normal_link_lookup(self):
+        issue = {'id': 503, 'subject': 'Škola', 'project': {'id': 1}, 'tracker': {'id': 4}, 'relations': []}
+        with patch.object(redmine, 'request', return_value={'issue': issue}):
+            self.assertEqual(redmine.find_issue_customers(503), [])
+            self.assertEqual(redmine.digest_customers('503')['503']['customers'], [{'id': 503, 'name': 'Škola'}])
+
     def test_customer_ids_are_bounded(self):
         for value in ['', '../1', '0', '1,', ','.join(str(i) for i in range(1, 42))]:
             with self.subTest(value=value), self.assertRaises(ValueError):
