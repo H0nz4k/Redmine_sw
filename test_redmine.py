@@ -68,6 +68,22 @@ class CloseIssueTests(unittest.TestCase):
             self.assertIsNotNone(db.execute('SELECT id FROM issues WHERE id=22').fetchone())
 
 
+class DigestCustomerTests(unittest.TestCase):
+    def test_current_verified_customers_and_unavailable_issues_are_distinct(self):
+        def lookup(issue_id):
+            if issue_id == 1: return [{'id': 20, 'name': 'Školní jídelna'}]
+            if issue_id == 2: return []
+            raise OSError('offline')
+        result = redmine.digest_customers('1,2,3,1', lookup)
+        self.assertEqual(result['1'], {'customers': [{'id': 20, 'name': 'Školní jídelna'}], 'available': True})
+        self.assertEqual(result['2'], {'customers': [], 'available': True})
+        self.assertEqual(result['3'], {'customers': [], 'available': False})
+
+    def test_customer_ids_are_bounded(self):
+        for value in ['', '../1', '0', '1,', ','.join(str(i) for i in range(1, 42))]:
+            with self.subTest(value=value), self.assertRaises(ValueError):
+                redmine.digest_customers(value, lambda issue_id: [])
+
 class SummaryTests(unittest.TestCase):
     def test_model_result_and_loopback(self):
         from io import BytesIO

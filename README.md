@@ -102,6 +102,8 @@ Návrhy řadí nejdříve podle shody e-mailu nebo telefonu, potom podle rozpozn
 
 ## Navigace přehledu (vývojová verze 0.1.0-dev.9)
 
+HW návrhy zahrnují otevřené helpdesk požadavky s rozpoznaným zařízením, které jsou nepřiřazené nebo přiřazené skupině Servis. Označení je orientační a samo nemění řešitele.
+
 Horní navigace: **Přehled, Helpdesk, Realizace, Mapa zákazníků**. V Přehledu je výchozí sekce **Dnes** s dnešními Helpdesk požadavky přiřazenými aktuálnímu uživateli, s nepřiřazenými HW návrhy k rozhodnutí, dalšími dnešními Helpdesk požadavky a se staršími HW návrhy. Samostatné části Přehledu obsahují Nové a změněné, Moje úkoly, HW návrhy, Dlouho otevřené a Denní přehled.
 
 **Denní přehled** je nadále celofiremní kronika napříč dostupnými projekty, nikoliv jen dnešní osobní Helpdesk. Otevře se jako podsekce Přehledu a používá nezměněný endpoint `/denni-prehled` s historií a plánováním generování. Žádný návrh přiřazení se automaticky nepřijímá. Tento commit a PR nejsou potvrzení nasazení na HanzHub.

@@ -39,6 +39,26 @@ const api=(p,o)=>fetch(prefix+p,o);
 const $=s=>document.querySelector(s);
 const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const announce=s=>$('#message').textContent=s;
+async function annotateCustomers(entries){
+ const ids=[...new Set(entries.map(entry=>String(entry.id)))];
+ for(let offset=0;offset<ids.length;offset+=40){
+  const batch=ids.slice(offset,offset+40);let values={};
+  try{const response=await api('/api/digest/customers?ids='+encodeURIComponent(batch.join(',')));if(!response.ok)throw Error();values=(await response.json()).items||{}}catch(error){}
+  for(const entry of entries){if(!batch.includes(String(entry.id))||!entry.node.isConnected)continue;const value=values[entry.id];
+   entry.node.textContent=' · Aktuální provozovna: '+(!value||!value.available?'nelze ověřit':value.customers.length?value.customers.map(c=>c.name).join(', '):'neověřena');
+  }
+ }
+}
+function annotateStoryCustomers(){
+ const entries=[];let inStories=false;
+ for(const node of $('#report').children){
+  if(node.tagName==='H2'){if(node.textContent.trim()==='Co se skutečně řešilo'){inStories=true;continue}if(inStories)break}
+  if(!inStories||node.tagName!=='P')continue;const link=node.querySelector('a[href]');if(!link)continue;
+  let url;try{url=new URL(link.href)}catch(error){continue}const match=url.pathname.match(/\/issues\/([1-9][0-9]*)\/?$/);if(!match)continue;
+  const span=document.createElement('span');span.className='customer-context';span.textContent=' · Aktuální provozovna: ověřuji…';link.after(span);entries.push({id:match[1],node:span});
+ }
+ annotateCustomers(entries);
+}
 const todayTime=value=>new Date(value).toLocaleTimeString('cs-CZ',{timeZone:'Europe/Prague',hour:'2-digit',minute:'2-digit'});
 async function loadToday(){
  const button=$('#refresh-today'), status=$('#today-status'), list=$('#today-list');
@@ -49,16 +69,18 @@ async function loadToday(){
   const date=new Date(data.checked_at).toLocaleDateString('cs-CZ',{timeZone:'Europe/Prague',dateStyle:'long'});
   status.textContent=date+' · od 00:00 do '+todayTime(data.checked_at)+' · dotčené požadavky: '+data.items.length+' · všechny dostupné projekty včetně uzavřených';
   if(!data.items.length){const p=document.createElement('p');p.textContent='Dnes zatím nejsou v dostupných projektech zaznamenány změny úkolů.';list.append(p);return}
+  const customerEntries=[];
   for(const item of data.items){
    const entry=document.createElement('article');entry.className='today-item';
    const title=document.createElement('h3'), link=document.createElement('a'), url=new URL(item.url);
    if(!['http:','https:'].includes(url.protocol))throw Error('Neplatný odkaz na požadavek.');
    link.href=url.href;link.target='_blank';link.rel='noopener noreferrer';link.textContent='#'+item.id+' · '+item.subject;title.append(link);entry.append(title);
-   const meta=document.createElement('p');meta.className='today-status';meta.textContent=item.project+' · aktuální stav: '+item.status;entry.append(meta);
+   const meta=document.createElement('p');meta.className='today-status';meta.textContent=item.project+' · aktuální stav: '+item.status;const customer=document.createElement('span');customer.textContent=' · Aktuální provozovna: ověřuji…';meta.append(customer);customerEntries.push({id:item.id,node:customer});entry.append(meta);
    if(item.created_at){const p=document.createElement('p');p.textContent=todayTime(item.created_at)+' · '+(item.author||'Neznámý autor')+' · nový požadavek'+(item.description?' — '+item.description:'');entry.append(p)}
    if(item.changes.length){const changes=document.createElement('ul');for(const change of item.changes){const li=document.createElement('li');li.textContent=todayTime(change.at)+' · '+(change.author||'Neznámý autor')+' · '+(change.labels.join(', ')||'komentář')+(change.note?' — '+change.note:'');changes.append(li)}entry.append(changes)}
    list.append(entry);
   }
+  annotateCustomers(customerEntries);
  }catch(error){list.replaceChildren();status.textContent=error.message||'Dnešní změny se nepodařilo načíst. Zkuste obnovit.'}
  finally{button.disabled=false}
 }
@@ -85,7 +107,7 @@ async function loadSettings(){
 async function openDay(day){
  const r=await api('/api/digest/report?day='+encodeURIComponent(day));
  const d=await r.json();if(!r.ok)throw Error(d.error||'Report nelze načíst');
- renderMd(d.markdown);
+ renderMd(d.markdown);annotateStoryCustomers();
  document.querySelectorAll('[data-day]').forEach(b=>b.setAttribute('aria-current',String(b.dataset.day===day)));
 }
 async function loadHistory(selected){

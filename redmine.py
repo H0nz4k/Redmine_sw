@@ -177,6 +177,22 @@ def find_issue_customers(issue_id):
     return found
 
 
+def digest_customers(raw_ids, lookup=None):
+    """Resolve current verified Redmine customer links without changing issues."""
+    parts = raw_ids.split(',') if isinstance(raw_ids, str) else []
+    if not 1 <= len(parts) <= 40 or any(not re.fullmatch(r'[1-9][0-9]{0,11}', part) for part in parts):
+        raise ValueError('Neplatný seznam požadavků.')
+    lookup = lookup or find_issue_customers
+    result = {}
+    for issue_id in dict.fromkeys(map(int, parts)):
+        try:
+            links = lookup(issue_id)
+            result[str(issue_id)] = {'customers': [{'id': int(c['id']), 'name': str(c['name'])} for c in links], 'available': True}
+        except Exception:
+            result[str(issue_id)] = {'customers': [], 'available': False}
+    return result
+
+
 sync_close_lock = threading.RLock()
 
 def sync():
@@ -710,6 +726,13 @@ class Handler(BaseHTTPRequestHandler):
                 self.send(daily_digest.today_overview(digest_issues, digest_request, BASE))
             except Exception:
                 self.send({'error': 'Dnešní změny se nepodařilo načíst z Redmine. Zkuste to znovu.'}, status=502)
+        elif self.path.startswith('/api/digest/customers?'):
+            try:
+                params = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)
+                if not KEY: raise ValueError('Redmine není nastavený.')
+                self.send({'items': digest_customers(params.get('ids', [''])[0])})
+            except ValueError:
+                self.send({'error': 'Provozovny nelze načíst.'}, status=400)
         elif self.path == '/api/digest/job':
             self.send(daily_digest.manual_job_status())
         elif self.path.startswith('/api/digest/excerpts?'):

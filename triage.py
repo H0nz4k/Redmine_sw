@@ -16,6 +16,7 @@ DEVICES = {
 }
 FAULTS = {
     'nefunguje': r'\bnefunguj\w*',
+    'nefunkční': r'\bnefunkcn\w*',
     'nejde': r'\bnejd\w*',
     'porucha': r'\bporuch\w*',
     'rozbité': r'\brozbit\w*',

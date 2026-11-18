@@ -19,6 +19,15 @@ class TriageTests(unittest.TestCase):
         self.assertEqual(item['confidence'], 'high')
         self.assertIn('tiskárna', item['devices'])
 
+    def test_service_assigned_terminal_nonfunctional_is_hardware_without_auto_assignment(self):
+        item = analyze_issue(ticket('výdejní terminál',
+            'terminál na straně kuchařek je nefunkční černý displej, občas problikne. Ze strany strávníka je funkční.',
+            assigned=11))
+        self.assertEqual(item['category'], 'hardware')
+        self.assertEqual(item['confidence'], 'high')
+        self.assertIn('nefunkční', item['faults'])
+        self.assertEqual(item['action'], 'none')
+
     def test_device_without_failure_requires_review(self):
         item = analyze_issue(ticket('Potřebujeme novou čtečku'))
         self.assertEqual(item['action'], 'review')
