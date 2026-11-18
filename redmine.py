@@ -17,10 +17,12 @@ import urllib.error
 from datetime import datetime, timezone
 from datetime import timedelta
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from html.parser import HTMLParser
 from pathlib import Path
-from suggestions import customer_suggestions
+from suggestions import customer_suggestions, emails
 from triage import analyze_issue
 import daily_digest
+import email_autolink
 import henk_redaction
 import realization_create
 
@@ -42,7 +44,7 @@ def app_version():
     root = Path(__file__).resolve().parent
     name = (root / 'VERSION').read_text(encoding='utf-8').strip() if (root / 'VERSION').exists() else 'unversioned'
     fingerprint = hashlib.sha256()
-    for filename in ('VERSION', 'redmine.py', 'index.html', 'mapa.html', 'triage.py', 'daily_digest.py', 'denni-prehled.html', 'henk_digest.py', 'henk_mcp.py', 'henk_redaction.py', 'appearance.css', 'appearance.js', 'realizace.js', 'realization_create.py'):
+    for filename in ('VERSION', 'redmine.py', 'index.html', 'mapa.html', 'triage.py', 'daily_digest.py', 'denni-prehled.html', 'henk_digest.py', 'henk_mcp.py', 'henk_redaction.py', 'email_autolink.py', 'appearance.css', 'appearance.js', 'realizace.js', 'realization_create.py'):
         path = root / filename
         if path.exists():
             fingerprint.update(filename.encode('utf-8') + b'\0' + path.read_bytes())
@@ -162,8 +164,9 @@ def connect():
     finally:
         db.close()
 
-def find_issue_customers(issue_id, include_self=False):
-    detail = request(f'/issues/{issue_id}.json', {'include': 'relations'})['issue']
+def find_issue_customers(issue_id, include_self=False, detail=None):
+    if detail is None:
+        detail = request(f'/issues/{issue_id}.json', {'include': 'relations'})['issue']
     ids = {detail.get('parent', {}).get('id')}
     for rel in detail.get('relations', []):
         ids.add(rel.get('issue_to_id') if rel.get('issue_id') == issue_id else rel.get('issue_id'))
@@ -179,19 +182,104 @@ def find_issue_customers(issue_id, include_self=False):
     return found
 
 
+class _TicketSenderParser(HTMLParser):
+    """Read only the Helpdesk sender text, never attachment links."""
+    def __init__(self):
+        super().__init__(convert_charrefs=True)
+        self.ticket_depth = 0
+        self.sender_depth = 0
+        self.parts = []
+
+    def handle_starttag(self, tag, attrs):
+        attrs = dict(attrs)
+        if tag == 'div':
+            if self.ticket_depth:
+                self.ticket_depth += 1
+            elif attrs.get('id') == 'ticket_data':
+                self.ticket_depth = 1
+        if tag == 'span' and self.ticket_depth:
+            if self.sender_depth:
+                self.sender_depth += 1
+            elif 'ticket_customer' in (attrs.get('class') or '').split():
+                self.sender_depth = 1
+
+    def handle_endtag(self, tag):
+        if tag == 'span' and self.sender_depth:
+            self.sender_depth -= 1
+        if tag == 'div' and self.ticket_depth:
+            self.ticket_depth -= 1
+
+    def handle_data(self, data):
+        if self.sender_depth:
+            self.parts.append(data)
+
+
+def digest_sender(issue_id):
+    """Read sender metadata from the issue page; never follow links or redirects."""
+    req = urllib.request.Request(BASE + '/issues/' + str(int(issue_id)),
+        headers={'X-Redmine-API-Key': KEY, 'Accept': 'text/html'})
+    opener = urllib.request.build_opener(_DigestNoRedirect())
+    try:
+        with opener.open(req, timeout=10) as response:
+            if response.headers.get_content_type() != 'text/html': return None
+            body = response.read(1048577)
+        if len(body) > 1048576: return None
+        parser = _TicketSenderParser()
+        parser.feed(body.decode('utf-8', errors='replace'))
+        return ' '.join(parser.parts)
+    except Exception:
+        return None
+
+
 def digest_customers(raw_ids, lookup=None):
-    """Resolve current verified Redmine customer links without changing issues."""
+    """Resolve linked customers and label local contact/content matches as proposals."""
     parts = raw_ids.split(',') if isinstance(raw_ids, str) else []
     if not 1 <= len(parts) <= 40 or any(not re.fullmatch(r'[1-9][0-9]{0,11}', part) for part in parts):
         raise ValueError('Neplatný seznam požadavků.')
-    lookup = lookup or (lambda issue_id: find_issue_customers(issue_id, include_self=True))
-    result = {}
+    result, pending = {}, {}
     for issue_id in dict.fromkeys(map(int, parts)):
         try:
-            links = lookup(issue_id)
+            detail = request(f'/issues/{issue_id}.json', {'include': 'relations'})['issue'] if lookup is None else None
+            links = find_issue_customers(issue_id, include_self=True, detail=detail) if lookup is None else lookup(issue_id)
             result[str(issue_id)] = {'customers': [{'id': int(c['id']), 'name': str(c['name'])} for c in links], 'available': True}
+            if detail is not None and not links:
+                pending[issue_id] = detail
         except Exception:
             result[str(issue_id)] = {'customers': [], 'available': False}
+    if pending:
+        try:
+            catalog = matching_customers()
+        except Exception:
+            catalog = None
+        for issue_id, detail in pending.items():
+            item = result[str(issue_id)]
+            if catalog is None:
+                item.update({'suggestions': [], 'suggestions_available': False})
+                continue
+            try:
+                sender = digest_sender(issue_id)
+                sender_emails = emails(sender or '')
+                sender_matches = [c for c in catalog if sender_emails & emails(' '.join(
+                    [str(v) for v in c.get('contacts', [])] +
+                    [str(c.get('email_contact') or ''), str(c.get('lead_contact') or '')]))]
+                if sender_matches:
+                    useful = [{'id': c['id'], 'name': c['name'],
+                               'reason': 'Přesná shoda e-mailu odesílatele; zkontrolujte provozovnu.'}
+                              for c in sender_matches]
+                else:
+                    matches = customer_suggestions(detail.get('subject') or '',
+                        (detail.get('description') or '') + '\n' + (sender or ''), catalog)
+                    # Do not show weak overlaps on generic school or device words.
+                    useful = [c for c in matches if any(signal in c.get('reason', '')
+                              for signal in ('e-mail', 'telefon', 'úplný název provozovny'))]
+                    email_matches = [c for c in useful if 'e-mail' in c.get('reason', '')]
+                    if email_matches:
+                        useful = email_matches
+                item.update({'suggestions': [{'id': int(c['id']), 'name': str(c['name']), 'reason': str(c['reason'])}
+                                            for c in useful],
+                             'suggestions_available': sender is not None})
+            except Exception:
+                item.update({'suggestions': [], 'suggestions_available': False})
     return result
 
 
@@ -204,6 +292,7 @@ def sync():
 def _sync():
     if not KEY:
         raise ValueError('Chybí REDMINE_API_KEY.')
+    autolink_cutoff = email_autolink.activate(connect)
     me = request('/users/current.json')['user']['id']
     collected = {}
     for params in ({'assigned_to_id': 'me', 'status_id': 'open'}, {'project_id': 'helpdesk', 'status_id': 'open'}):
@@ -223,6 +312,7 @@ def _sync():
         proposals = {i['id']: customer_suggestions(i.get('subject', ''), i.get('description', ''), catalog)
                      for i in collected.values() if i.get('project', {}).get('id') == 12}
     except Exception:
+        catalog = None
         proposals = None
     now = datetime.now(timezone.utc).isoformat()
     with connect() as db:
@@ -247,6 +337,16 @@ def _sync():
                 db.execute('DELETE FROM issue_customer_suggestions WHERE issue_id=?', (old_id,))
         for k,v in [('last_sync', now), ('user_id', str(me)), ('error', '')]:
             db.execute('INSERT INTO meta VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value=excluded.value', (k,v))
+    if catalog is not None:
+        scan_now = datetime.now(timezone.utc)
+        scan_from = email_autolink.scan_start(connect, autolink_cutoff)
+        query_day = (scan_from.astimezone(daily_digest.TZ).date() - timedelta(days=1)).isoformat()
+        new_issues = list(issues({'project_id': 'helpdesk', 'status_id': '*', 'created_on': '>=' + query_day}))
+        email_autolink.process(connect, new_issues, catalog, autolink_cutoff, digest_sender,
+            lambda iid: request(f'/issues/{iid}.json', {'include': 'relations'})['issue'],
+            lambda iid: request(f'/issues/{iid}/relations.json')['relations'],
+            lambda iid, detail: find_issue_customers(iid, detail=detail), redmine_write, scan_now)
+        email_autolink.mark_scanned(connect, scan_now)
     return len(collected)
 
 def snapshot():
@@ -260,7 +360,9 @@ def snapshot():
     for customer in customers()['customers']:
         for related in (customer.get('related_status') or {}).get('issues', []):
             customer_links.setdefault(related['id'], []).append({'id': customer['issue_id'], 'name': customer['name']})
+    autolink_states = email_autolink.statuses(connect)
     for issue in data:
+        issue['email_autolink_state'] = autolink_states.get(issue['id'])
         links = direct_links.get(issue['id'], customer_links.get(issue['id'], []))
         issue['customers'] = list({c['id']: c for c in links}.values())
         cached = proposals.get(issue['id'])
@@ -732,7 +834,10 @@ class Handler(BaseHTTPRequestHandler):
             try:
                 params = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)
                 if not KEY: raise ValueError('Redmine není nastavený.')
-                self.send({'items': digest_customers(params.get('ids', [''])[0])})
+                items = digest_customers(params.get('ids', [''])[0])
+                states = email_autolink.statuses(connect)
+                for issue_id, item in items.items(): item['auto_state'] = states.get(int(issue_id))
+                self.send({'items': items})
             except ValueError:
                 self.send({'error': 'Provozovny nelze načíst.'}, status=400)
         elif self.path == '/api/digest/job':

@@ -45,7 +45,9 @@ async function annotateCustomers(entries){
   const batch=ids.slice(offset,offset+40);let values={};
   try{const response=await api('/api/digest/customers?ids='+encodeURIComponent(batch.join(',')));if(!response.ok)throw Error();values=(await response.json()).items||{}}catch(error){}
   for(const entry of entries){if(!batch.includes(String(entry.id))||!entry.node.isConnected)continue;const value=values[entry.id];
-   entry.node.textContent=' · Aktuální provozovna: '+(!value||!value.available?'nelze ověřit':value.customers.length?value.customers.map(c=>c.name).join(', '):'neověřena');
+   const proposal=value?.suggestions?.length?' · Návrh k ověření: '+value.suggestions.map(c=>c.name+' ('+c.reason+')').join('; '):value?.suggestions_available===false?' · Návrh se nepodařilo ověřit':'';
+   const autoState={review:' · Automatické propojení vyžaduje kontrolu',unknown:' · Výsledek automatického propojení je nejistý: zkontroluj Redmine',sending:' · Výsledek odeslání čeká na ověření',checking:' · Automatická kontrola běží nebo byla přerušena'}[value?.auto_state]||'';
+   entry.node.textContent=' · Aktuální provozovna: '+(!value||!value.available?'nelze ověřit':value.customers.length?value.customers.map(c=>c.name).join(', '):'neověřena'+proposal)+autoState;
   }
  }
 }

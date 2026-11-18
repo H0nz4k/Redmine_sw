@@ -85,6 +85,47 @@ class DigestCustomerTests(unittest.TestCase):
             self.assertEqual(redmine.find_issue_customers(503), [])
             self.assertEqual(redmine.digest_customers('503')['503']['customers'], [{'id': 503, 'name': 'Škola'}])
 
+    def test_sender_parser_reads_only_ticket_sender_text(self):
+        parser = redmine._TicketSenderParser()
+        parser.feed('<div>jiný@example.test</div><div id="ticket_data"><span class="ticket_customer"><a href="/contacts/7">Skola</a> (jidelna@skola.test)</span><span class="attachment"><a href="/attachments/4">secret@example.test</a></span></div>')
+        text = ' '.join(parser.parts)
+        self.assertIn('jidelna@skola.test', text)
+        self.assertNotIn('jiný@example.test', text)
+        self.assertNotIn('secret@example.test', text)
+
+    def test_unlinked_issue_returns_explicit_contact_proposals_including_ambiguity(self):
+        issue = {'id': 5, 'subject': 'Terminál', 'description': 'Nefunkční terminál', 'project': {'id': 12}, 'tracker': {'id': 1}, 'relations': []}
+        catalog = [{'id': 1, 'name': 'Základní škola Test', 'contacts': ['jid@skola.test']},
+                   {'id': 2, 'name': 'Jídelna Test', 'contacts': ['jid@skola.test']}]
+        with patch.object(redmine, 'request', return_value={'issue': issue}), patch.object(redmine, 'matching_customers', return_value=catalog), patch.object(redmine, 'digest_sender', return_value='jid@skola.test'):
+            item = redmine.digest_customers('5')['5']
+        self.assertEqual(item['customers'], [])
+        self.assertEqual({c['id'] for c in item['suggestions']}, {1, 2})
+        self.assertTrue(all('e-mail' in c['reason'] for c in item['suggestions']))
+
+    def test_sender_email_takes_priority_over_phone_in_message(self):
+        issue = {'id': 5, 'subject': 'Terminál', 'description': 'Telefon 777 111 222',
+                 'project': {'id': 12}, 'tracker': {'id': 1}, 'relations': []}
+        catalog = [{'id': 1, 'name': 'První škola', 'contacts': ['jid@skola.test']},
+                   {'id': 2, 'name': 'Druhá škola', 'contacts': ['777111222']}]
+        with patch.object(redmine, 'request', return_value={'issue': issue}), patch.object(redmine, 'matching_customers', return_value=catalog), patch.object(redmine, 'digest_sender', return_value='jid@skola.test'):
+            proposals = redmine.digest_customers('5')['5']['suggestions']
+        self.assertEqual([c['id'] for c in proposals], [1])
+        self.assertIn('e-mailu odesílatele', proposals[0]['reason'])
+
+    def test_weak_name_matches_are_not_reported_as_proposals(self):
+        issue = {'id': 5, 'subject': 'Zařízení školního stravování', 'description': 'servis terminálu', 'project': {'id': 12}, 'tracker': {'id': 1}, 'relations': []}
+        catalog = [{'id': 1, 'name': 'Zařízení školního stravování Litovel', 'contacts': []}]
+        with patch.object(redmine, 'request', return_value={'issue': issue}), patch.object(redmine, 'matching_customers', return_value=catalog), patch.object(redmine, 'digest_sender', return_value=''):
+            self.assertEqual(redmine.digest_customers('5')['5']['suggestions'], [])
+
+    def test_missing_catalog_is_reported_without_fabricating_a_proposal(self):
+        issue = {'id': 5, 'subject': 'Terminál', 'description': '', 'project': {'id': 12}, 'tracker': {'id': 1}, 'relations': []}
+        with patch.object(redmine, 'request', return_value={'issue': issue}), patch.object(redmine, 'matching_customers', side_effect=OSError('offline')):
+            result = redmine.digest_customers('5')['5']
+        self.assertEqual(result['suggestions'], [])
+        self.assertFalse(result['suggestions_available'])
+
     def test_customer_ids_are_bounded(self):
         for value in ['', '../1', '0', '1,', ','.join(str(i) for i in range(1, 42))]:
             with self.subTest(value=value), self.assertRaises(ValueError):
@@ -131,6 +172,27 @@ class SyncTests(unittest.TestCase):
         with patch.object(redmine, 'request', side_effect=OSError('offline')):
             with self.assertRaises(OSError): redmine.sync()
         self.assertEqual(len(redmine.snapshot()['issues']), 1)
+
+    def test_autolink_scans_new_helpdesk_issues_in_all_statuses(self):
+        from datetime import datetime, timezone
+        cutoff = datetime(2026, 11, 18, 10, tzinfo=timezone.utc)
+        closed = {'id': 90, 'project': {'id': 12}, 'created_on': '2026-11-18T10:01:00Z',
+                  'updated_on': '2026-11-18T10:01:00Z', 'status': {'name': 'Uzavřený'}}
+        def listed(params):
+            return iter([closed] if 'created_on' in params else [])
+        with patch.object(redmine, 'request', return_value={'user': {'id': 7}}), \
+             patch.object(redmine, 'issues', side_effect=listed) as fetch, \
+             patch.object(redmine, 'matching_customers', return_value=[]), \
+             patch.object(redmine.email_autolink, 'activate', return_value=cutoff), \
+             patch.object(redmine.email_autolink, 'scan_start', return_value=cutoff), \
+             patch.object(redmine.email_autolink, 'process') as process, \
+             patch.object(redmine.email_autolink, 'mark_scanned') as mark:
+            redmine.sync()
+        query = fetch.call_args_list[-1].args[0]
+        self.assertEqual(query['project_id'], 'helpdesk')
+        self.assertEqual(query['status_id'], '*')
+        self.assertEqual(process.call_args.args[1], [closed])
+        mark.assert_called_once()
     def test_customer_locations_and_relations(self):
         path = os.path.join(self.tmp.name, 'customers.json')
         with open(path, 'w', encoding='utf-8') as f:
