@@ -93,7 +93,7 @@ class CreationTests(unittest.TestCase):
                 return {'group':{'users':[{'id':8,'name':'slavo'},{'id':9,'name':'Petr'}]}}
             return self.request(path,params)
         result=rc.prepare(42,with_group)
-        self.assertEqual([m['id'] for m in result['members']],[9,7,8] if False else [7,9,8])
+        self.assertEqual([m['id'] for m in result['members']],[7,9,8])
         self.assertEqual(result['members_warning'],'')
         self.assertIn(9,{u['id'] for u in result['members']})
 
