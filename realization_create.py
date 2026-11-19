@@ -20,7 +20,7 @@ def api_request(base, key, path, params=None):
     if re.fullmatch(r'/issues/[1-9][0-9]{0,11}\.json',path):
         permitted={'include'}
         if params.get('include') not in (None,'children'): raise ValueError('Nepovolený požadavek.')
-    elif re.fullmatch(r'/groups/[1-9][0-9]{0,11}\\.json',path):
+    elif re.fullmatch(r'/groups/[1-9][0-9]{0,11}\.json',path):
         if params.get('include')!='users': raise ValueError('Nepovolený požadavek.')
         permitted={'include'}
     elif path in allowed: permitted=allowed[path]
