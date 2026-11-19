@@ -176,3 +176,26 @@ html[data-theme=dark] .overview .nav button[aria-current=true]{border-top-color:
 
 /* Vložená mapa sdílí synchronizaci z hlavní hlavičky. */
 html.embedded-view .map-page header{display:none}
+
+/* Dva hlavní řádky issue: nadpis, poté zákazník a řešitel. */
+.overview .issue-keyfacts{display:flex;align-items:center;flex-wrap:wrap;gap:7px 24px;margin-top:9px;font-size:var(--ui-size);line-height:1.4}
+.overview .issue-customer,.overview .issue-assignee{display:flex;align-items:center;gap:7px;flex-wrap:wrap;min-width:0}
+.overview .issue-customer>span,.overview .issue-assignee>span{color:var(--ui-muted)}
+.overview .issue-customer strong,.overview .issue-assignee strong{font-weight:800!important;color:var(--ui-text)!important}
+.overview .issue-customer a{font-weight:800!important;color:var(--ui-text)!important;text-decoration:none}
+.overview .issue-customer a:hover{text-decoration:underline}
+.overview .issue-customer small{font-size:calc(var(--ui-size) - 2px);color:var(--ui-muted)}
+.overview .issue-find-customer{min-height:32px;max-width:100%;padding:4px 10px;background:var(--ui-surface);color:var(--ui-text);border:1px solid var(--ui-accent);border-radius:4px;font-size:inherit;font-weight:700;overflow-wrap:anywhere;text-align:left}
+.overview .issue-find-customer:hover{background:var(--ui-hover)}
+.customer-dialog{width:min(640px,calc(100vw - 24px));max-width:640px;max-height:calc(100dvh - 32px);overflow:auto}
+.customer-dialog .brief-dialog-head{display:flex;align-items:center;justify-content:space-between;gap:12px}
+.customer-dialog .customer-search-label{display:block;margin:15px 0 6px;font-weight:700}
+.customer-dialog input[type=search]{width:100%;min-height:42px;background:var(--ui-surface);color:var(--ui-text);border:1px solid var(--ui-border);border-radius:4px;padding:7px 11px}
+.customer-dialog #customer-dialog-status{color:var(--ui-muted);line-height:1.4}
+.customer-dialog-list{display:grid;gap:8px;max-height:44dvh;overflow:auto}
+.customer-dialog-choice{display:block;width:100%;text-align:left;background:var(--ui-surface);color:var(--ui-text);border:1px solid var(--ui-border);border-radius:5px;padding:9px 12px}
+.customer-dialog-choice:hover{background:var(--ui-hover)}
+.customer-dialog-choice strong,.customer-dialog-choice small{display:block}
+.customer-dialog-choice strong{font-size:var(--ui-size);font-weight:700}
+.customer-dialog-choice small{font-size:calc(var(--ui-size) - 2px);color:var(--ui-muted);margin-top:5px}
+@media(max-width:600px){.overview .issue-keyfacts{gap:6px 16px}.overview .issue-customer,.overview .issue-assignee{flex-basis:100%}.customer-dialog-list{max-height:42dvh}}
