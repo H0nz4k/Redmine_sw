@@ -19,6 +19,7 @@ from datetime import timedelta
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from suggestions import customer_suggestions
+from auto_customer import decide_customer
 from triage import analyze_issue
 import daily_digest
 import henk_redaction
@@ -35,6 +36,7 @@ CUSTOMERS = Path(os.environ.get('CUSTOMERS_FILE', 'data/customers.json'))
 UNIX_SOCKET = os.environ.get('REDMINE_UNIX_SOCKET', '')
 VOICE_SOCKET = os.environ.get('REDMINE_VOICE_SOCKET', '')
 ALLOWED_ORIGINS = {value.strip() for value in os.environ.get('REDMINE_ALLOWED_ORIGINS', '').split(',') if value.strip()}
+AUTO_CUSTOMER_MODE = os.environ.get('REDMINE_AUTO_CUSTOMER_LINK', 'dry-run').strip().lower()
 
 @lru_cache(maxsize=1)
 def app_version():
@@ -42,7 +44,7 @@ def app_version():
     root = Path(__file__).resolve().parent
     name = (root / 'VERSION').read_text(encoding='utf-8').strip() if (root / 'VERSION').exists() else 'unversioned'
     fingerprint = hashlib.sha256()
-    for filename in ('VERSION', 'redmine.py', 'index.html', 'mapa.html', 'triage.py', 'daily_digest.py', 'denni-prehled.html', 'henk_digest.py', 'henk_mcp.py', 'henk_redaction.py', 'appearance.css', 'appearance.js', 'realizace.js', 'realization_create.py'):
+    for filename in ('VERSION', 'redmine.py', 'index.html', 'mapa.html', 'triage.py', 'daily_digest.py', 'denni-prehled.html', 'henk_digest.py', 'henk_mcp.py', 'henk_redaction.py', 'appearance.css', 'appearance.js', 'realizace.js', 'realization_create.py', 'auto_customer.py'):
         path = root / filename
         if path.exists():
             fingerprint.update(filename.encode('utf-8') + b'\0' + path.read_bytes())
@@ -153,6 +155,8 @@ def connect():
     db.execute('CREATE TABLE IF NOT EXISTS events (id INTEGER PRIMARY KEY, issue_id INTEGER NOT NULL, kind TEXT NOT NULL, seen_at TEXT NOT NULL)')
     db.execute('CREATE TABLE IF NOT EXISTS issue_customer_suggestions (issue_id INTEGER PRIMARY KEY, updated TEXT NOT NULL, payload TEXT NOT NULL)')
     db.execute('CREATE TABLE IF NOT EXISTS issue_customer_links (issue_id INTEGER PRIMARY KEY, updated TEXT NOT NULL, payload TEXT NOT NULL)')
+    db.execute('CREATE TABLE IF NOT EXISTS auto_customer_audit (id INTEGER PRIMARY KEY AUTOINCREMENT, issue_id INTEGER NOT NULL, updated TEXT NOT NULL, outcome TEXT NOT NULL, customer_id INTEGER, reason TEXT NOT NULL, checked_at TEXT NOT NULL)')
+    db.execute('CREATE INDEX IF NOT EXISTS idx_auto_customer_issue ON auto_customer_audit(issue_id, id)')
     db.execute('CREATE TABLE IF NOT EXISTS customer_issue_status (issue_id INTEGER PRIMARY KEY, payload TEXT NOT NULL, checked_at TEXT NOT NULL)')
     db.execute('CREATE TABLE IF NOT EXISTS added_customers (issue_id INTEGER PRIMARY KEY, name TEXT NOT NULL, address TEXT NOT NULL)')
     db.execute('CREATE TABLE IF NOT EXISTS customer_locations (issue_id INTEGER PRIMARY KEY, lat REAL NOT NULL, lon REAL NOT NULL)')
@@ -200,6 +204,7 @@ def _sync():
                 link_updates[issue['id']] = find_issue_customers(issue['id'])
             except Exception:
                 link_updates[issue['id']] = None
+    catalog = None
     try:
         catalog = matching_customers()
         proposals = {i['id']: customer_suggestions(i.get('subject', ''), i.get('description', ''), catalog)
@@ -229,7 +234,77 @@ def _sync():
                 db.execute('DELETE FROM issue_customer_suggestions WHERE issue_id=?', (old_id,))
         for k,v in [('last_sync', now), ('user_id', str(me)), ('error', '')]:
             db.execute('INSERT INTO meta VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value=excluded.value', (k,v))
+    if catalog is not None and AUTO_CUSTOMER_MODE in ('dry-run', 'write'):
+        auto_link_customers(collected, catalog)
     return len(collected)
+
+def _auto_customer_audit(iid, updated, outcome, customer_id, reason):
+    with connect() as db:
+        db.execute(
+            'INSERT INTO auto_customer_audit(issue_id,updated,outcome,customer_id,reason,checked_at) VALUES (?,?,?,?,?,?)',
+            (iid, updated, outcome, customer_id, reason, datetime.now(timezone.utc).isoformat())
+        )
+
+
+def auto_link_customers(collected, catalog):
+    """Match against Redmine customer cards; only write with explicit opt-in.
+
+    Called under sync_close_lock. Avoid repeating any uncertain remote write,
+    including after a subsequent update to the Helpdesk issue.
+    """
+    if AUTO_CUSTOMER_MODE not in ('dry-run', 'write'):
+        return
+    with connect() as db:
+        existing = {
+            iid: json.loads(payload)
+            for iid, payload in db.execute('SELECT issue_id,payload FROM issue_customer_links')
+        }
+        history = {}
+        for iid, updated, outcome in db.execute(
+            'SELECT issue_id,updated,outcome FROM auto_customer_audit ORDER BY id'
+        ):
+            history.setdefault(iid, []).append((updated, outcome))
+    for issue in collected.values():
+        if issue.get('project', {}).get('id') != 12:
+            continue
+        iid, updated = issue['id'], issue['updated_on']
+        if iid not in existing or existing[iid]:
+            # Missing cache can mean an API failure: fail closed.
+            continue
+        past = history.get(iid, [])
+        if any(outcome in ('written', 'uncertain') for _, outcome in past):
+            continue
+        if any(version == updated and (
+            outcome in ('review', 'none', 'existing', 'changed') or
+            (outcome == 'dry-run' and AUTO_CUSTOMER_MODE == 'dry-run')
+        ) for version, outcome in past):
+            continue
+        try:
+            detail = request(f'/issues/{iid}.json', {'include': 'relations'})['issue']
+            if detail.get('project', {}).get('id') != 12 or detail.get('updated_on') != updated:
+                _auto_customer_audit(iid, updated, 'changed', None, 'Požadavek se během kontroly změnil.')
+                continue
+            decision = decide_customer(detail, catalog)
+            if decision['status'] != 'auto':
+                _auto_customer_audit(iid, updated, decision['status'], None, decision['reason'])
+                continue
+            target = decision['customer_id']
+            if AUTO_CUSTOMER_MODE == 'dry-run':
+                _auto_customer_audit(iid, updated, 'dry-run', target, decision['reason'])
+                continue
+            # Fresh check before writing; do not override a hand-linked customer.
+            if find_issue_customers(iid):
+                _auto_customer_audit(iid, updated, 'existing', None, 'Požadavek už má zákazníka.')
+                continue
+            _apply_helpdesk_change(iid, 'customer', target, updated, helpdesk_state_token(detail))
+            _auto_customer_audit(iid, updated, 'written', target, decision['reason'])
+        except ValueError:
+            _auto_customer_audit(iid, updated, 'changed', None, 'Propojení vyžaduje novou kontrolu.')
+        except Exception:
+            # Some remote writes can succeed despite network errors. Never
+            # replay until a human checks the actual Redmine issue.
+            _auto_customer_audit(iid, updated, 'uncertain', None, 'Výsledek kontroly či zápisu není potvrzen; ověřte Redmine.')
+
 
 def snapshot():
     with connect() as db:
