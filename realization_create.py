@@ -20,6 +20,9 @@ def api_request(base, key, path, params=None):
     if re.fullmatch(r'/issues/[1-9][0-9]{0,11}\.json',path):
         permitted={'include'}
         if params.get('include') not in (None,'children'): raise ValueError('Nepovolený požadavek.')
+    elif re.fullmatch(r'/groups/[1-9][0-9]{0,11}\.json',path):
+        if params.get('include')!='users': raise ValueError('Nepovolený požadavek.')
+        permitted={'include'}
     elif path in allowed: permitted=allowed[path]
     else: raise ValueError('Nepovolený požadavek.')
     if set(params)-permitted: raise ValueError('Nepovolené parametry.')
@@ -95,21 +98,39 @@ def prepare(parent_id, request):
         raise ValueError('Redmine neposkytl seznam dílčích úkolů; nelze bezpečně ověřit duplicity.')
     if not parent.get('updated_on') or not parent.get('tracker', {}).get('id'):
         raise ValueError('Redmine neposkytl potřebné údaje realizace.')
-    members, offset = [], 0
+    members, groups, offset = [], {}, 0
     while True:
         payload = request('/projects/realizace/memberships.json', {'limit': 100, 'offset': offset})
         batch, total = payload.get('memberships'), payload.get('total_count')
         if not isinstance(batch,list) or type(total) is not int or total < 0:
             raise ValueError('Redmine neposkytl úplný seznam řešitelů.')
         members.extend(m['user'] for m in batch if m.get('user') and type(m['user'].get('id')) is int)
+        for entry in batch:
+            group=entry.get('group')
+            if isinstance(group,dict) and type(group.get('id')) is int and group['id']>0:
+                groups[group['id']]=group.get('name') or 'Skupina'
         offset += len(batch)
         if offset >= total: break
         if not batch or offset > 10000: raise ValueError('Seznam řešitelů je neúplný.')
+    warnings=[]
+    for group_id in groups:
+        try:
+            group=request(f'/groups/{group_id}.json',{'include':'users'})['group']
+            users=group.get('users')
+            if not isinstance(users,list):
+                raise ValueError('Seznam členů skupiny není dostupný.')
+            for user in users:
+                if isinstance(user,dict) and type(user.get('id')) is int and user['id']>0 and isinstance(user.get('name'),str):
+                    members.append({'id':user['id'],'name':user['name']})
+        except Exception:
+            # Group details require elevated Redmine API privileges. Never
+            # invent users or bypass target-ID validation on write.
+            warnings.append(groups[group_id])
     members = sorted({m['id']: {'id':m['id'], 'name':m.get('name', '')} for m in members}.values(),key=lambda m:m['name'].casefold())
     children=[{'id':c.get('id'),'subject':c.get('subject','')} for c in parent['children']]
     token=hashlib.sha256(json.dumps({'id':parent_id,'updated':parent['updated_on'],'children':children},sort_keys=True,ensure_ascii=False).encode()).hexdigest()
     return {'id':parent_id,'subject':parent.get('subject',''),'updated_on':parent['updated_on'], 'token':token,
-            'project_id':project['id'],'tracker_id':parent['tracker']['id'],'members':members,'children':children}
+            'project_id':project['id'],'tracker_id':parent['tracker']['id'],'members':members,'members_warning':('Nelze načíst uživatele ze skupin: '+', '.join(warnings)+'. Správce Redminu musí ověřit přístup ke skupinám.' if warnings else ''),'children':children}
 
 
 def create_http(base, key, issue):

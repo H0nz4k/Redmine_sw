@@ -17,7 +17,7 @@
   let context=null, pending=null, busy=false, reviewPlan=null, selectedMatch=false, loadSeq=0;
   let saved = {};
   try { saved = JSON.parse(localStorage.getItem(key) || '{}') || {}; } catch (_) { saved = {}; }
-  const state = {name:typeof saved.name==='string'?saved.name:'', parent:typeof saved.parent==='string'?saved.parent:'', equipment:Array.isArray(saved.equipment)?saved.equipment:[], choices:saved.choices && typeof saved.choices==='object'?saved.choices:{}, owners:saved.owners && typeof saved.owners==='object'?saved.owners:{}};
+  const state = {name:typeof saved.name==='string'?saved.name:'', parent:typeof saved.parent==='string'?saved.parent:'', equipment:Array.isArray(saved.equipment)?saved.equipment:[], choices:saved.choices && typeof saved.choices==='object'?saved.choices:{}, owners:saved.owners && typeof saved.owners==='object'?saved.owners:{}, notes:saved.notes && typeof saved.notes==='object'?saved.notes:{}};
   pending=saved.pending && typeof saved.pending==='object' ? saved.pending : null;
   selectedMatch=Boolean(state.name && state.parent);
   $('real-name').value=state.name;
@@ -27,15 +27,17 @@
   function relevant(task) { return (!task.hardware || state.equipment.some(x=>['tt3511','tt3503','zolík','dorsys'].includes(x))) && (!task.software || state.equipment.includes('software')) && (!task.dorsys || state.equipment.includes('dorsys')); }
   function selected(task) {return state.choices[task.id] !== false;}
   function owner(task) {return typeof state.owners[task.id] === 'string' ? state.owners[task.id] : task.owner;}
+  function taskDescription(task) {const note=typeof state.notes[task.id]==='string'?state.notes[task.id].trim():'';return task.info+(note?'\n\n'+note:'');}
   function persist() {try {localStorage.setItem(key,JSON.stringify({...state,pending})); $('real-save-status').textContent='Návrh uložen v tomto prohlížeči.';return true;} catch (_) {$('real-save-status').textContent='Návrh se nepodařilo uložit v prohlížeči.';return false;}}
   function member(task) { const val=owner(task).trim(); if(!context)return null; const matches=context.members.filter(m=>String(m.id)===val||m.name.toLocaleLowerCase('cs')===val.toLocaleLowerCase('cs')); return matches.length===1?matches[0]:null; }
   function updateOutput() {
     const active=tasks.filter(t=>relevant(t)&&selected(t));
-    $('real-count').textContent=`Vybráno: ${active.length}`;
+    const invalidDescription=active.some(t=>taskDescription(t).length>1000);
+    $('real-count').textContent=`Vybráno: ${active.length}`+(invalidDescription?' · Příliš dlouhý popis úkolu':'');
     const devices=equipment.filter(x=>x.checked).map(x=>x.parentElement.textContent.trim());
-    const lines=[`Realizace: ${state.name.trim() || 'doplnit název'}`,state.parent.trim()?`Nadřazený úkol: #${state.parent.trim()}`:'',`Dodávka: ${devices.join(', ') || 'není vybrána'}`,'','Dílčí úkoly:',...active.map(t=>`- ${t.title} — ${member(t)?.name || owner(t).trim() || 'řešitele doplnit'}`)];
+    const lines=[`Realizace: ${state.name.trim() || 'doplnit název'}`,state.parent.trim()?`Nadřazený úkol: #${state.parent.trim()}`:'',`Dodávka: ${devices.join(', ') || 'není vybrána'}`,'','Dílčí úkoly:',...active.flatMap(t=>[`- ${t.title} — ${member(t)?.name || owner(t).trim() || 'řešitele doplnit'}`, ...((typeof state.notes[t.id]==='string' && state.notes[t.id].trim()) ? [`  Vlastní zpráva: ${state.notes[t.id].trim()}`] : [])])];
     $('real-output').value=lines.filter((line,i)=>line || i!==1).join('\n');
-    $('real-create').disabled=busy || !!pending || !context || context.id !== Number(state.parent) || !active.length || active.some(t=>!member(t));
+    $('real-create').disabled=busy || !!pending || !context || context.id !== Number(state.parent) || !active.length || invalidDescription || active.some(t=>!member(t));
     $('real-check').hidden=!pending; $('real-clear').disabled=busy;
     const link=$('real-parent-link');
     let base=''; try {base=typeof data !== 'undefined' && data?.base_url || '';} catch (_) {}
@@ -43,6 +45,11 @@
   }
   function render() {
     const list=$('real-tasks'); list.replaceChildren();
+    const bulk=$('real-bulk-owner'); bulk.replaceChildren();
+    const empty=document.createElement('option'); empty.value=''; empty.textContent='Vyber řešitele';bulk.append(empty);
+    (context?.members||[]).forEach(m=>{const option=document.createElement('option');option.value=String(m.id);option.textContent=m.name;bulk.append(option);});
+    bulk.disabled=!context||busy;$('real-bulk-apply').disabled=true;
+    $('real-member-hint').textContent=context?(context.members_warning || (context.members.length===1?'Redmine vrací jen jednoho člena projektu. Další řešitelé musí mít oprávnění v projektu Realizace.':'Dostupní řešitelé podle členství v projektu Realizace.')):'Po načtení realizace se zobrazí dostupní řešitelé.';
     tasks.filter(relevant).forEach(task=>{
       const row=document.createElement('div'); row.className='realization-task';
       const label=document.createElement('label'); label.className='realization-task-label';
@@ -53,7 +60,13 @@
       let input;
       if(context){input=document.createElement('select');const blank=document.createElement('option');blank.value='';blank.textContent='Vybrat řešitele';input.append(blank);context.members.forEach(m=>{const option=document.createElement('option');option.value=String(m.id);option.textContent=m.name;input.append(option)});input.value=String(member(task)?.id||'');input.addEventListener('change',()=>{state.owners[task.id]=input.value;updateOutput();persist();});}
       else {input=document.createElement('input');input.value=owner(task);input.placeholder='Nejdřív načti realizaci';input.disabled=true;}
-      input.setAttribute('aria-label','Řešitel: '+task.title);assignee.append(input);row.append(label,assignee);list.append(row);
+      input.setAttribute('aria-label','Řešitel: '+task.title);assignee.append(input);
+      const noteLabel=document.createElement('label');noteLabel.className='realization-description';noteLabel.textContent='Vlastní zpráva do popisu úkolu (nepovinné)';
+      const note=document.createElement('textarea');note.rows=2;note.maxLength=800;note.placeholder='Doplň pokyny nebo text pro tento úkol…';
+      note.value=typeof state.notes[task.id]==='string'?state.notes[task.id]:'';
+      note.setAttribute('aria-label','Vlastní zpráva: '+task.title);
+      note.addEventListener('input',()=>{state.notes[task.id]=note.value;updateOutput();persist();});
+      noteLabel.append(note);row.append(label,assignee,noteLabel);list.append(row);
     });updateOutput();
   }
   for(const [id,field] of [['real-name','name'],['real-parent','parent']]) $(id).addEventListener('input',e=>{
@@ -83,8 +96,11 @@
   for(const id of ['real-name','real-parent']){const field=$(id);field.addEventListener('input',()=>suggest(field));field.addEventListener('focus',()=>{if(field.value.trim())suggest(field);});field.addEventListener('keydown',e=>field._realizationKeys?.(e));field.addEventListener('blur',()=>setTimeout(()=>{if(!document.activeElement?.closest('.realization-search'))hideSuggestions();},100));}
 
   equipment.forEach(input=>input.addEventListener('change',()=>{state.equipment=equipment.filter(x=>x.checked).map(x=>x.value);render();persist();}));
+  $('real-bulk-owner').addEventListener('change',()=>{$('real-bulk-apply').disabled=busy||!context||!$('real-bulk-owner').value;});
+  $('real-bulk-apply').addEventListener('click',()=>{const id=$('real-bulk-owner').value;if(!context||!context.members.some(m=>String(m.id)===id))return;tasks.forEach(task=>{state.owners[task.id]=id;});render();persist();});
+
   $('real-select').addEventListener('click',()=>{$('real-output').focus();$('real-output').select();$('real-save-status').textContent='Text je vybraný; zkopíruj jej pomocí Ctrl+C.';});
-  $('real-clear').addEventListener('click',()=>{if (pending && !window.confirm('Tento návrh má odeslaný požadavek. Nejprve ověřte výsledek v Redmine. Opravdu odstranit záznam o tomto pokusu?')) return; if (!window.confirm('Zahodit rozpracovaný návrh a začít nový?')) return; pending=null;context=null;loadSeq++;selectedMatch=false;hideSuggestions();$('real-existing').hidden=true;$('real-result').textContent='';$('real-load-status').textContent=''; state.name='';state.parent='';state.equipment=[];state.choices={};state.owners={};$('real-name').value='';$('real-parent').value='';equipment.forEach(input=>{input.checked=false;});render();persist();$('real-name').focus();});
+  $('real-clear').addEventListener('click',()=>{if (pending && !window.confirm('Tento návrh má odeslaný požadavek. Nejprve ověřte výsledek v Redmine. Opravdu odstranit záznam o tomto pokusu?')) return; if (!window.confirm('Zahodit rozpracovaný návrh a začít nový?')) return; pending=null;context=null;loadSeq++;selectedMatch=false;hideSuggestions();$('real-existing').hidden=true;$('real-result').textContent='';$('real-load-status').textContent=''; state.name='';state.parent='';state.equipment=[];state.choices={};state.owners={};state.notes={};$('real-name').value='';$('real-parent').value='';equipment.forEach(input=>{input.checked=false;});render();persist();$('real-name').focus();});
   function showResult(result) {
     const box=$('real-result');box.replaceChildren();
     const head=document.createElement('strong');head.textContent=result.state==='complete'?'Všechny úkoly byly ověřeny v Redmine.':'Založení není dokončeno. Neověřené a neodeslané úkoly zkontroluj v Redmine.';box.append(head);
@@ -100,12 +116,12 @@
     catch(e){if(sequence===loadSeq){context=null;render();$('real-load-status').textContent='Načtení se nezdařilo: '+e.message;}}finally{$('real-load').disabled=false;}
   });
   $('real-create').addEventListener('click',()=>{
-    const active=tasks.filter(t=>relevant(t)&&selected(t));if(!context||pending||!active.length||active.some(t=>!member(t)))return;
-    const suffix=state.name.trim()||context.subject;const taskList=active.map(t=>({subject:t.title+' – '+suffix,description:t.info,assignee_id:member(t).id}));
+    const active=tasks.filter(t=>relevant(t)&&selected(t));if(!context||pending||!active.length||active.some(t=>!member(t)||taskDescription(t).length>1000))return;
+    const suffix=state.name.trim()||context.subject;const taskList=active.map(t=>({subject:t.title+' – '+suffix,description:taskDescription(t),assignee_id:member(t).id}));
     if(taskList.some(t=>t.subject.length>255)){$('real-result').textContent='Název úkolu je příliš dlouhý; zkrať název zakázky.';return;}
     reviewPlan={parent_id:context.id,token:context.token,tasks:taskList};
     $('real-confirm-parent').textContent=`Nadřazená realizace #${context.id}: ${context.subject}`;
-    const list=$('real-confirm-list');list.replaceChildren();active.forEach((t,i)=>{const li=document.createElement('li');li.textContent=taskList[i].subject+' — '+member(t).name;list.append(li)});
+    const list=$('real-confirm-list');list.replaceChildren();active.forEach((t,i)=>{const li=document.createElement('li');li.textContent=taskList[i].subject+' — '+member(t).name+(typeof state.notes[t.id]==='string'&&state.notes[t.id].trim()?' · vlastní zpráva: '+state.notes[t.id].trim():'');list.append(li)});
     $('real-confirm').showModal();
   });
   $('real-cancel').addEventListener('click',()=>{$('real-confirm').close();reviewPlan=null;});
