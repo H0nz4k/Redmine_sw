@@ -72,6 +72,43 @@ class CreationTests(unittest.TestCase):
         self.assertEqual(result['tasks'][0]['state'],'unknown');self.assertEqual(result['tasks'][0]['issue_id'],101)
         self.assertEqual(result['tasks'][1]['state'],'pending');self.assertEqual(len(self.writes),1)
 
+    def test_custom_message_and_other_member_are_created_verbatim(self):
+        plan=self.plan()
+        message='Ověř zapojení zařízení.\\nPředání zákazníkovi: potvrdit převzetí.'
+        plan['tasks'][1]['description']=message
+        plan['tasks'][1]['assignee_id']=8
+        result=rc.create_batch(plan,self.request,redmine.connect,self.create)
+        self.assertEqual(result['state'],'complete')
+        self.assertEqual(self.writes[1]['description'],message)
+        self.assertEqual(self.writes[1]['assigned_to_id'],8)
+
+    def test_project_group_users_can_be_selected_when_api_permits(self):
+        def with_group(path,params=None):
+            if path=='/projects/realizace/memberships.json':
+                return {'memberships':[
+                    {'user':{'id':7,'name':'honza'}},
+                    {'group':{'id':13,'name':'Technici'}}], 'total_count':2}
+            if path=='/groups/13.json':
+                self.assertEqual(params,{'include':'users'})
+                return {'group':{'users':[{'id':8,'name':'slavo'},{'id':9,'name':'Petr'}]}}
+            return self.request(path,params)
+        result=rc.prepare(42,with_group)
+        self.assertEqual([m['id'] for m in result['members']],[9,7,8] if False else [7,9,8])
+        self.assertEqual(result['members_warning'],'')
+        self.assertIn(9,{u['id'] for u in result['members']})
+
+    def test_unreadable_group_does_not_invent_users(self):
+        def no_group_access(path,params=None):
+            if path=='/projects/realizace/memberships.json':
+                return {'memberships':[
+                    {'user':{'id':7,'name':'honza'}},
+                    {'group':{'id':13,'name':'Technici'}}], 'total_count':2}
+            if path=='/groups/13.json': raise PermissionError('403')
+            return self.request(path,params)
+        result=rc.prepare(42,no_group_access)
+        self.assertEqual([m['id'] for m in result['members']],[7])
+        self.assertIn('Technici',result['members_warning'])
+
     def test_open_status_may_omit_is_closed(self):
         def legacy_status(path,params=None):
             if path=='/issue_statuses.json':return {'issue_statuses':[{'id':1,'name':'Nový'}]}
