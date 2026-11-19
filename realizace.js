@@ -35,7 +35,7 @@
     const invalidDescription=active.some(t=>taskDescription(t).length>1000);
     $('real-count').textContent=`Vybráno: ${active.length}`+(invalidDescription?' · Příliš dlouhý popis úkolu':'');
     const devices=equipment.filter(x=>x.checked).map(x=>x.parentElement.textContent.trim());
-    const lines=[`Realizace: ${state.name.trim() || 'doplnit název'}`,state.parent.trim()?`Nadřazený úkol: #${state.parent.trim()}`:'',`Dodávka: ${devices.join(', ') || 'není vybrána'}`,'','Dílčí úkoly:',...active.flatMap(t=>[`- ${t.title} — ${member(t)?.name || owner(t).trim() || 'řešitele doplnit'}`, ...((state.notes[t.id] || '').trim() ? [`  Vlastní zpráva: ${state.notes[t.id].trim()}`] : [])])];
+    const lines=[`Realizace: ${state.name.trim() || 'doplnit název'}`,state.parent.trim()?`Nadřazený úkol: #${state.parent.trim()}`:'',`Dodávka: ${devices.join(', ') || 'není vybrána'}`,'','Dílčí úkoly:',...active.flatMap(t=>[`- ${t.title} — ${member(t)?.name || owner(t).trim() || 'řešitele doplnit'}`, ...((typeof state.notes[t.id]==='string' && state.notes[t.id].trim()) ? [`  Vlastní zpráva: ${state.notes[t.id].trim()}`] : [])])];
     $('real-output').value=lines.filter((line,i)=>line || i!==1).join('\n');
     $('real-create').disabled=busy || !!pending || !context || context.id !== Number(state.parent) || !active.length || invalidDescription || active.some(t=>!member(t));
     $('real-check').hidden=!pending; $('real-clear').disabled=busy;
@@ -49,7 +49,7 @@
     const empty=document.createElement('option'); empty.value=''; empty.textContent='Vyber řešitele';bulk.append(empty);
     (context?.members||[]).forEach(m=>{const option=document.createElement('option');option.value=String(m.id);option.textContent=m.name;bulk.append(option);});
     bulk.disabled=!context||busy;$('real-bulk-apply').disabled=true;
-    $('real-member-hint').textContent=context?(context.members.length===1?'Redmine vrací jen jednoho člena projektu. Další řešitelé musí mít oprávnění v projektu Realizace.':'Dostupní řešitelé podle členství v projektu Realizace.'):'Po načtení realizace se zobrazí dostupní řešitelé.';
+    $('real-member-hint').textContent=context?(context.members_warning || (context.members.length===1?'Redmine vrací jen jednoho člena projektu. Další řešitelé musí mít oprávnění v projektu Realizace.':'Dostupní řešitelé podle členství v projektu Realizace.')):'Po načtení realizace se zobrazí dostupní řešitelé.';
     tasks.filter(relevant).forEach(task=>{
       const row=document.createElement('div'); row.className='realization-task';
       const label=document.createElement('label'); label.className='realization-task-label';
@@ -121,7 +121,7 @@
     if(taskList.some(t=>t.subject.length>255)){$('real-result').textContent='Název úkolu je příliš dlouhý; zkrať název zakázky.';return;}
     reviewPlan={parent_id:context.id,token:context.token,tasks:taskList};
     $('real-confirm-parent').textContent=`Nadřazená realizace #${context.id}: ${context.subject}`;
-    const list=$('real-confirm-list');list.replaceChildren();active.forEach((t,i)=>{const li=document.createElement('li');li.textContent=taskList[i].subject+' — '+member(t).name+(state.notes[t.id]?.trim()?' · vlastní zpráva: '+state.notes[t.id].trim():'');list.append(li)});
+    const list=$('real-confirm-list');list.replaceChildren();active.forEach((t,i)=>{const li=document.createElement('li');li.textContent=taskList[i].subject+' — '+member(t).name+(typeof state.notes[t.id]==='string'&&state.notes[t.id].trim()?' · vlastní zpráva: '+state.notes[t.id].trim():'');list.append(li)});
     $('real-confirm').showModal();
   });
   $('real-cancel').addEventListener('click',()=>{$('real-confirm').close();reviewPlan=null;});
