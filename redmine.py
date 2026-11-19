@@ -44,7 +44,7 @@ def app_version():
     root = Path(__file__).resolve().parent
     name = (root / 'VERSION').read_text(encoding='utf-8').strip() if (root / 'VERSION').exists() else 'unversioned'
     fingerprint = hashlib.sha256()
-    for filename in ('VERSION', 'redmine.py', 'index.html', 'mapa.html', 'triage.py', 'daily_digest.py', 'denni-prehled.html', 'henk_digest.py', 'henk_mcp.py', 'henk_redaction.py', 'appearance.css', 'appearance.js', 'realizace.js', 'realization_create.py', 'auto_customer.py'):
+    for filename in ('VERSION', 'redmine.py', 'index.html', 'mapa.html', 'triage.py', 'daily_digest.py', 'denni-prehled.html', 'henk_digest.py', 'henk_mcp.py', 'henk_redaction.py', 'appearance.css', 'appearance.js', 'realizace.js', 'realization_create.py', 'auto_customer.py', 'customer_dialog.js'):
         path = root / filename
         if path.exists():
             fingerprint.update(filename.encode('utf-8') + b'\0' + path.read_bytes())
@@ -720,7 +720,7 @@ class Handler(BaseHTTPRequestHandler):
             self.send(Path(__file__).with_name('mapa.html').read_bytes(), 'text/html; charset=utf-8')
         elif self.path == '/denni-prehled':
             self.send(Path(__file__).with_name('denni-prehled.html').read_bytes(), 'text/html; charset=utf-8')
-        elif self.path in ('/appearance.css', '/appearance.js', '/realizace.js'):
+        elif self.path in ('/appearance.css', '/appearance.js', '/realizace.js', '/customer_dialog.js'):
             asset = Path(__file__).parent / self.path.lstrip('/')
             self.send(asset.read_bytes(), 'text/css; charset=utf-8' if self.path.endswith('.css') else 'text/javascript; charset=utf-8')
         elif self.path in ('/vendor/leaflet/leaflet.js', '/vendor/leaflet/leaflet.css'):
